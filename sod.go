@@ -54,6 +54,7 @@ type DB struct {
 	schemas map[string]*Schema
 }
 
+// Open opens a Simple Object Database
 func Open(root string) *DB {
 	return &DB{root: root, schemas: map[string]*Schema{}}
 }
@@ -65,13 +66,28 @@ func (db *DB) itemname(o Object) string {
 	return stype(o)
 }
 
+func (db *DB) oDir(of Object) string {
+	return filepath.Join(db.root, db.itemname(of))
+}
+
+func (db *DB) oPath(of Object) (path string, err error) {
+	var s *Schema
+
+	if s, err = db.Schema(of); err != nil {
+		return
+	}
+
+	return filepath.Join(db.oDir(of), filename(of, s)), nil
+}
+
+// Create creates the schema for Object
 func (db *DB) Create(o Object, s *Schema) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
 	var data []byte
 
-	dir := filepath.Join(db.root, db.itemname(o))
+	dir := db.oDir(o)
 	path := filepath.Join(dir, SchemaFilename)
 
 	if err = os.MkdirAll(dir, DefaultPermissions); err != nil {
@@ -91,15 +107,16 @@ func (db *DB) Create(o Object, s *Schema) (err error) {
 	return
 }
 
-func (db *DB) Schema(o Object) (s *Schema, err error) {
+// Schema retrieves the schema of an Object
+func (db *DB) Schema(of Object) (s *Schema, err error) {
 	var ok bool
 	var stat os.FileInfo
 
-	if s, ok = db.schemas[stype(o)]; ok {
+	if s, ok = db.schemas[stype(of)]; ok {
 		return
 	}
 
-	path := filepath.Join(db.root, db.itemname(o), SchemaFilename)
+	path := filepath.Join(db.oDir(of), SchemaFilename)
 	if stat, err = os.Stat(path); err != nil {
 		return
 	}
@@ -108,7 +125,7 @@ func (db *DB) Schema(o Object) (s *Schema, err error) {
 		if err = UnmarshalJsonFile(path, &s); err != nil {
 			return
 		}
-		db.schemas[stype(o)] = s
+		db.schemas[stype(of)] = s
 		return
 	}
 
@@ -120,13 +137,12 @@ func (db *DB) Get(o Object) (err error) {
 	db.RLock()
 	defer db.RUnlock()
 
-	var s *Schema
+	var path string
 
-	if s, err = db.Schema(o); err != nil {
-		return
+	if path, err = db.oPath(o); err != nil {
+		return err
 	}
 
-	path := filepath.Join(db.root, db.itemname(o), filename(o, s))
 	return UnmarshalJsonFile(path, o)
 }
 
@@ -134,6 +150,7 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	db.RLock()
 	defer db.RUnlock()
 
+	var o Object
 	var it *Iterator
 
 	if it, err = db.Iterator(of); err != nil {
@@ -141,8 +158,12 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	}
 
 	out = make([]Object, 0, it.Len())
-	for o, err := it.Next(); err == nil || err != ErrEOI; o, err = it.Next() {
+	for o, err = it.Next(); err == nil && err != ErrEOI; o, err = it.Next() {
 		out = append(out, o)
+	}
+
+	if err == ErrEOI {
+		err = nil
 	}
 	return
 }
@@ -154,7 +175,7 @@ func (db *DB) Iterator(of Object) (it *Iterator, err error) {
 	var s *Schema
 	var entries []os.DirEntry
 
-	dir := filepath.Join(db.root, db.itemname(of))
+	dir := db.oDir(of)
 
 	if s, err = db.Schema(of); err != nil {
 		return
@@ -204,8 +225,8 @@ func (db *DB) Drop() (err error) {
 	return os.RemoveAll(path)
 }
 
-// DropObjects drops all Objects of the same type as from
-func (db *DB) DropObjects(of Object) (err error) {
+// DeleteAll deletes all Objects of the same type
+func (db *DB) DeleteAll(of Object) (err error) {
 	var it *Iterator
 	var o Object
 
@@ -214,35 +235,32 @@ func (db *DB) DropObjects(of Object) (err error) {
 	}
 
 	for o, err = it.Next(); err == nil || err != ErrEOI; o, err = it.Next() {
-		if err = db.DropObject(o); err != nil {
+		if err = db.Delete(o); err != nil {
 			return
 		}
 	}
 	return
 }
 
-// DropObject deletes a single Object from the database
-func (db *DB) DropObject(o Object) (err error) {
+// Delete deletes a single Object from the database
+func (db *DB) Delete(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
-	var s *Schema
+	var path string
 
-	if s, err = db.Schema(o); err != nil {
+	if path, err = db.oPath(o); err != nil {
 		return
 	}
-
-	path := filepath.Join(db.root, db.itemname(o), filename(o, s))
 	return os.Remove(path)
 }
 
 func (db *DB) exist(o Object) (ok bool, err error) {
-	var s *Schema
+	var path string
 
-	if s, err = db.Schema(o); err != nil {
+	if path, err = db.oPath(o); err != nil {
 		return
 	}
 
-	path := filepath.Join(db.root, db.itemname(o), filename(o, s))
 	stat, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -261,12 +279,8 @@ func (db *DB) Update(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
+	var path string
 	var data []byte
-	var s *Schema
-
-	if s, err = db.Schema(o); err != nil {
-		return
-	}
 
 	// this is a new object, we have to handle here
 	// potential uuid duplicates (even though it is very unlikely)
@@ -280,10 +294,11 @@ func (db *DB) Update(o Object) (err error) {
 		}
 	}
 
-	dir := filepath.Join(db.root, db.itemname(o))
-	path := filepath.Join(dir, filename(o, s))
+	if path, err = db.oPath(o); err != nil {
+		return
+	}
 
-	if err = os.MkdirAll(dir, DefaultPermissions); err != nil {
+	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
 		return
 	}
 

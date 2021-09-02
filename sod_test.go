@@ -1,6 +1,9 @@
 package sod
 
 import (
+	"encoding/json"
+	"errors"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -73,6 +76,53 @@ func TestGetAll(t *testing.T) {
 	}
 }
 
+func corruptFile(path string) {
+	var data []byte
+	var err error
+
+	if data, err = ioutil.ReadFile(path); err != nil {
+		panic(err)
+	}
+
+	for i := range data {
+		if rand.Int()%2 == 0 {
+			data[i] = '\x00'
+		}
+	}
+
+	if err := ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
+		panic(err)
+	}
+
+}
+
+func TestCorruptedFiles(t *testing.T) {
+	count := 100
+	db := createFreshTestDb(count)
+
+	if s, err := db.All(&TestStruct{}); err != nil {
+		t.Error(err)
+	} else {
+		t.Log("Corrupting files")
+		for _, o := range s {
+			if path, err := db.oPath(o); err != nil {
+				t.Error(err)
+				t.FailNow()
+			} else {
+				corruptFile(path)
+			}
+		}
+	}
+
+	if s, err := db.All(&TestStruct{}); errors.Is(err, &json.MarshalerError{}) {
+		t.Logf("Retrieved %d objects", len(s))
+		t.Error("We should have encountered error")
+	} else {
+		t.Logf("Encountered error getting objects: %s", err)
+	}
+
+}
+
 func TestDrop(t *testing.T) {
 	n := 20
 	deln := 10
@@ -86,7 +136,7 @@ func TestDrop(t *testing.T) {
 				break
 			}
 			t := o.(*TestStruct)
-			db.DropObject(t)
+			db.Delete(t)
 			i--
 		}
 
@@ -95,7 +145,7 @@ func TestDrop(t *testing.T) {
 		}
 
 		// droping all items
-		db.DropObjects(&TestStruct{})
+		db.DeleteAll(&TestStruct{})
 		if c, err := db.Count(&TestStruct{}); c != 0 {
 			t.Errorf("Expecting %d items, got %d: %s", n-deln, c, err)
 		}
