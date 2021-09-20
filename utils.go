@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"strings"
 
@@ -53,4 +54,12 @@ func uuidExt(name string) (uuid, ext string) {
 	uuid = s[0]
 	ext = fmt.Sprintf(".%s", s[1])
 	return
+}
+
+func isFileAndExist(path string) bool {
+	stat, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return stat.Mode().IsRegular() && err == nil
 }
