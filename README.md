@@ -20,6 +20,7 @@ What you should not use this project for:
 
 # Examples
 
+See [examples](./examples) directory for all examples.
 
 ```go
 package main
@@ -75,3 +76,5 @@ func main() {
 	printSearchResult(db.Search(&Person{}, "Age", ">=", 40))
 }
 ```
+
+
