@@ -151,13 +151,19 @@ func (db *DB) Create(o Object, s *Schema) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
-	s.Initialize(o)
-
-	if err = db.saveSchema(o, s, false); err != nil {
+	// the schema is existing and we don't need to build a new one
+	if _, err = db.schema(o); err == nil {
 		return
-	}
+	} else {
+		// we need to create a new schema
+		s.Initialize(o)
 
-	db.schemas[stype(o)] = s
+		if err = db.saveSchema(o, s, false); err != nil {
+			return
+		}
+
+		db.schemas[stype(o)] = s
+	}
 
 	return
 }
@@ -209,7 +215,6 @@ func (db *DB) All(of Object) (out []Object, err error) {
 
 func (db *DB) searchAll(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
 	var iter *Iterator
-	var obj Object
 	var err error
 	var s *Schema
 
@@ -228,25 +233,26 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 		}
 		iter = &Iterator{db: db, i: 0, uuids: uuids, t: typeof(o)}
 	} else if iter, err = db.Iterator(o); err != nil {
-
 		return &Search{err: err}
 	}
 
 	// we go through the iterator
-	for obj, err = iter.Next(); err == nil && err != ErrEOI; obj, err = iter.Next() {
+	for obj, err := iter.Next(); err == nil && err != ErrEOI; obj, err = iter.Next() {
 		var test *IndexedField
 		var value interface{}
-		var ok bool
 
-		index := s.ObjectsIndex.uuids[obj.UUID()]
-		if value, ok = fieldByName(obj, field); !ok {
-			return &Search{err: fmt.Errorf("%w %s", ErrUnkownField, field)}
-		}
-		if test, err = NewIndexedField(value, index); err != nil {
-			return &Search{err: err}
-		}
-		if test.Evaluate(operator, search) {
-			f = append(f, test)
+		if index, ok := s.ObjectsIndex.uuids[obj.UUID()]; ok {
+			if value, ok = fieldByName(obj, field); !ok {
+				return &Search{err: fmt.Errorf("%w %s", ErrUnkownField, field)}
+			}
+			if test, err = NewIndexedField(value, index); err != nil {
+				return &Search{err: err}
+			}
+			if test.Evaluate(operator, search) {
+				f = append(f, test)
+			}
+		} else {
+			panic("index corrupted")
 		}
 	}
 	if err == ErrEOI {
