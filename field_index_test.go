@@ -25,6 +25,27 @@ func shouldPanic(t *testing.T, f func()) {
 	t.Errorf("should have panicked")
 }
 
+func TestFieldByName(t *testing.T) {
+	type A struct {
+		Aa int
+	}
+
+	type B struct {
+		Item
+		A
+		Bb string
+	}
+
+	b := B{}
+	b.A = A{42}
+
+	if i, ok := fieldByName(&b, "Aa"); !ok {
+		t.Errorf("Must have found field")
+	} else if i.(int) != 42 {
+		t.Errorf("Unexpected interface value")
+	}
+}
+
 func TestSimpleIndex(t *testing.T) {
 	size := 1000
 	i := NewFieldIndex(0, size)

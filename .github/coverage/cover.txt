@@ -19,7 +19,7 @@ github.com/0xrawsec/sod/field_index.go:259:	rangeEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:267:	SearchEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:278:	SearchNotEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:287:	SearchGreaterOrEqual	100.0%
-github.com/0xrawsec/sod/field_index.go:297:	SearchGreater		100.0%
+github.com/0xrawsec/sod/field_index.go:297:	SearchGreater		91.7%
 github.com/0xrawsec/sod/field_index.go:320:	SearchLess		100.0%
 github.com/0xrawsec/sod/field_index.go:329:	SearchLessOrEqual	100.0%
 github.com/0xrawsec/sod/field_index.go:344:	insert			100.0%
@@ -89,4 +89,4 @@ github.com/0xrawsec/sod/utils.go:40:		typeof			100.0%
 github.com/0xrawsec/sod/utils.go:48:		filename		100.0%
 github.com/0xrawsec/sod/utils.go:52:		uuidExt			100.0%
 github.com/0xrawsec/sod/utils.go:59:		isFileAndExist		75.0%
-total:						(statements)		89.4%
+total:						(statements)		89.2%
