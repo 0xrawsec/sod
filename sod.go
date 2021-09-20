@@ -119,6 +119,55 @@ func (db *DB) exist(o Object) (ok bool, err error) {
 	return stat.Mode().IsRegular() && err == nil, nil
 }
 
+func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
+	var path string
+	var data []byte
+	var schema *Schema
+
+	// this is a new object, we have to handle here
+	// potential uuid duplicates (even though it is very unlikely)
+	if o.UUID() == "" {
+		for ok := true; ok; {
+			o.Initialize(uuidOrPanic())
+			ok, err = db.exist(o)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	if schema, err = db.schema(o); err != nil {
+		return
+	}
+
+	if err = schema.Index(o); err != nil {
+		return
+	}
+
+	if path, err = db.oPath(o); err != nil {
+		return
+	}
+
+	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
+		return
+	}
+
+	if data, err = json.Marshal(o); err != nil {
+		return
+	}
+
+	if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
+		return
+	}
+
+	if commit {
+		return db.commit(o)
+	}
+
+	return
+
+}
+
 func (db *DB) search(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
 	var s *Schema
 	var f []*IndexedField
@@ -154,16 +203,16 @@ func (db *DB) Create(o Object, s *Schema) (err error) {
 	// the schema is existing and we don't need to build a new one
 	if _, err = db.schema(o); err == nil {
 		return
-	} else {
-		// we need to create a new schema
-		s.Initialize(o)
-
-		if err = db.saveSchema(o, s, false); err != nil {
-			return
-		}
-
-		db.schemas[stype(o)] = s
 	}
+
+	// we need to create a new schema
+	s.Initialize(o)
+
+	if err = db.saveSchema(o, s, false); err != nil {
+		return
+	}
+
+	db.schemas[stype(o)] = s
 
 	return
 }
@@ -376,48 +425,36 @@ func (db *DB) Exist(o Object) (ok bool, err error) {
 	return db.exist(o)
 }
 
-// InsertOrUpdate inserts or updates a single Object
+// InsertOrUpdateBulk inserts objects in bulk in the DB. This
+// function is locking the DB and will terminate only when input
+// channel is closed
+func (db *DB) InsertOrUpdateBulk(in chan Object) (err error) {
+	db.Lock()
+	defer db.Unlock()
+	var o Object
+
+	for o = range in {
+		if err == nil {
+			err = db.insertOrUpdate(o, false)
+		}
+	}
+
+	if o != nil && err == nil {
+		return db.commit(o)
+	}
+
+	return
+}
+
+// InsertOrUpdate inserts or updates a single Object and commits
+// changes. This method is not suited for bulk insertions as each
+// insert will trigger a write overhead. For
+// bulk insertion use InsertOrUpdateBulk function
 func (db *DB) InsertOrUpdate(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
-	var path string
-	var data []byte
-	var schema *Schema
-
-	// this is a new object, we have to handle here
-	// potential uuid duplicates (even though it is very unlikely)
-	if o.UUID() == "" {
-		for ok := true; ok; {
-			o.Initialize(uuidOrPanic())
-			ok, err = db.exist(o)
-			if err != nil {
-				return
-			}
-		}
-	}
-
-	if schema, err = db.schema(o); err != nil {
-		return
-	}
-
-	if err = schema.Index(o); err != nil {
-		return
-	}
-
-	if path, err = db.oPath(o); err != nil {
-		return
-	}
-
-	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
-		return
-	}
-
-	if data, err = json.Marshal(o); err != nil {
-		return
-	}
-
-	return ioutil.WriteFile(path, data, DefaultPermissions)
+	return db.insertOrUpdate(o, true)
 }
 
 func (db *DB) commit(o Object) (err error) {
