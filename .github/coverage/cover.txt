@@ -19,7 +19,7 @@ github.com/0xrawsec/sod/field_index.go:259:	rangeEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:267:	SearchEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:278:	SearchNotEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:287:	SearchGreaterOrEqual	100.0%
-github.com/0xrawsec/sod/field_index.go:297:	SearchGreater		91.7%
+github.com/0xrawsec/sod/field_index.go:297:	SearchGreater		100.0%
 github.com/0xrawsec/sod/field_index.go:320:	SearchLess		100.0%
 github.com/0xrawsec/sod/field_index.go:329:	SearchLessOrEqual	100.0%
 github.com/0xrawsec/sod/field_index.go:344:	insert			100.0%
@@ -48,13 +48,14 @@ github.com/0xrawsec/sod/object.go:16:		UUID			100.0%
 github.com/0xrawsec/sod/schema.go:23:		Initialize		100.0%
 github.com/0xrawsec/sod/schema.go:30:		Index			100.0%
 github.com/0xrawsec/sod/schema.go:34:		Unindex			100.0%
-github.com/0xrawsec/sod/search.go:12:		newSearch		100.0%
-github.com/0xrawsec/sod/search.go:17:		And			100.0%
-github.com/0xrawsec/sod/search.go:25:		Or			100.0%
-github.com/0xrawsec/sod/search.go:45:		Len			100.0%
-github.com/0xrawsec/sod/search.go:51:		Iterator		87.5%
-github.com/0xrawsec/sod/search.go:69:		Collect			83.3%
-github.com/0xrawsec/sod/search.go:95:		Err			100.0%
+github.com/0xrawsec/sod/search.go:13:		newSearch		100.0%
+github.com/0xrawsec/sod/search.go:18:		And			100.0%
+github.com/0xrawsec/sod/search.go:26:		Or			100.0%
+github.com/0xrawsec/sod/search.go:46:		Len			100.0%
+github.com/0xrawsec/sod/search.go:52:		Iterator		87.5%
+github.com/0xrawsec/sod/search.go:70:		Reverse			100.0%
+github.com/0xrawsec/sod/search.go:81:		Collect			87.5%
+github.com/0xrawsec/sod/search.go:114:		Err			100.0%
 github.com/0xrawsec/sod/sod.go:31:		saveSchema		72.7%
 github.com/0xrawsec/sod/sod.go:54:		loadSchema		75.0%
 github.com/0xrawsec/sod/sod.go:77:		schema			100.0%
@@ -89,4 +90,4 @@ github.com/0xrawsec/sod/utils.go:40:		typeof			100.0%
 github.com/0xrawsec/sod/utils.go:48:		filename		100.0%
 github.com/0xrawsec/sod/utils.go:52:		uuidExt			100.0%
 github.com/0xrawsec/sod/utils.go:59:		isFileAndExist		75.0%
-total:						(statements)		89.2%
+total:						(statements)		89.6%

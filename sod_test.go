@@ -234,12 +234,12 @@ func TestSchema(t *testing.T) {
 
 	db = Open(dbpath)
 	// first call should unmarshall schema from disk
-	if s, err = db.Schema(&testStruct{}); err != nil {
+	if _, err = db.Schema(&testStruct{}); err != nil {
 		t.Error(err)
 	}
 
 	// second call should use cached schema
-	if s, err = db.Schema(&testStruct{}); err != nil {
+	if _, err = db.Schema(&testStruct{}); err != nil {
 		t.Error(err)
 	}
 }
@@ -343,6 +343,49 @@ func TestIndexAllTypes(t *testing.T) {
 		Collect(); err != nil {
 		t.Error(err)
 	}
+}
+
+func TestSearchOrder(t *testing.T) {
+	size := 100
+	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A")}
+	db := createFreshTestDb(size, s)
+
+	// testing normal output
+	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Collect(); err != nil {
+		t.Error(err)
+	} else {
+		var prev *testStruct
+
+		for _, obj := range sr {
+			ts := obj.(*testStruct)
+			if prev == nil {
+				prev = ts
+				continue
+			}
+			if ts.A > prev.A {
+				t.Error("order is not correct")
+			}
+		}
+	}
+
+	// testing reversed output
+	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Reverse().Collect(); err != nil {
+		t.Error(err)
+	} else {
+		var prev *testStruct
+
+		for _, obj := range sr {
+			ts := obj.(*testStruct)
+			if prev == nil {
+				prev = ts
+				continue
+			}
+			if ts.A < prev.A {
+				t.Error("reversed order is not correct")
+			}
+		}
+	}
+
 }
 
 func TestSearchError(t *testing.T) {

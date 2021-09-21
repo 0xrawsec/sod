@@ -3,10 +3,11 @@ package sod
 // Search helper structure to easily build search queries on objects
 // and retrieve the results
 type Search struct {
-	db     *DB
-	object Object
-	fields []*IndexedField
-	err    error
+	db      *DB
+	object  Object
+	fields  []*IndexedField
+	reverse bool
+	err     error
 }
 
 func newSearch(db *DB, o Object, f []*IndexedField, err error) *Search {
@@ -14,25 +15,25 @@ func newSearch(db *DB, o Object, f []*IndexedField, err error) *Search {
 }
 
 // And performs a new Search while "ANDing" search results
-func (r *Search) And(field, operator string, value interface{}) *Search {
-	if r.Err() != nil {
-		return r
+func (s *Search) And(field, operator string, value interface{}) *Search {
+	if s.Err() != nil {
+		return s
 	}
-	return r.db.search(r.object, field, operator, value, r.fields)
+	return s.db.search(s.object, field, operator, value, s.fields)
 }
 
 // And performs a new Search while "ORing" search results
-func (r *Search) Or(field, operator string, value interface{}) *Search {
-	if r.Err() != nil {
-		return r
+func (s *Search) Or(field, operator string, value interface{}) *Search {
+	if s.Err() != nil {
+		return s
 	}
-	new := r.db.search(r.object, field, operator, value, nil)
+	new := s.db.search(s.object, field, operator, value, nil)
 	marked := make(map[uint64]bool)
 	// we mark the fields of the new search
 	for _, f := range new.fields {
 		marked[f.ObjectId] = true
 	}
-	for _, f := range r.fields {
+	for _, f := range s.fields {
 		// we concat the searches while deduplicating
 		if _, ok := marked[f.ObjectId]; !ok {
 			new.fields = append(new.fields, f)
@@ -42,45 +43,63 @@ func (r *Search) Or(field, operator string, value interface{}) *Search {
 }
 
 // Len returns the number of data returned by the search
-func (r *Search) Len() int {
-	return len(r.fields)
+func (s *Search) Len() int {
+	return len(s.fields)
 }
 
 // Iterator returns an Iterator convenient to iterate over
 // the objects resulting from the search
-func (r *Search) Iterator() (it *Iterator, err error) {
-	var s *Schema
+func (s *Search) Iterator() (it *Iterator, err error) {
+	var sch *Schema
 
-	if s, err = r.db.schema(r.object); err != nil {
+	if sch, err = s.db.schema(s.object); err != nil {
 		return
 	}
 
-	it = &Iterator{db: r.db, t: typeof(r.object)}
-	it.uuids = make([]string, 0, len(r.fields))
+	it = &Iterator{db: s.db, t: typeof(s.object)}
+	it.uuids = make([]string, 0, len(s.fields))
 
-	for _, f := range r.fields {
-		it.uuids = append(it.uuids, s.ObjectsIndex.ObjectIds[f.ObjectId])
+	for _, f := range s.fields {
+		it.uuids = append(it.uuids, sch.ObjectsIndex.ObjectIds[f.ObjectId])
 	}
 
 	return
 }
 
-// Collect all the objects resulting from the search
-func (r *Search) Collect() (out []Object, err error) {
+// Reverse the order the results are collected by Collect function
+func (s *Search) Reverse() *Search {
+	s.reverse = true
+	return s
+}
+
+// Collect all the objects resulting from the search.
+// If a search has been made on an indexed field, results
+// will be in descending order by default. If you want to change
+// result order, call Reverse before.
+// NB: only search on indexed field(s) will be garanteed to be
+// ordered according to the last field searched.
+func (s *Search) Collect() (out []Object, err error) {
 	var it *Iterator
 	var o Object
 
-	if r.Err() != nil {
-		return nil, r.Err()
+	if s.Err() != nil {
+		return nil, s.Err()
 	}
 
-	if it, err = r.Iterator(); err != nil {
+	if it, err = s.Iterator(); err != nil {
 		return
 	}
 
 	out = make([]Object, 0, it.Len())
 	for o, err = it.Next(); err == nil && err != ErrEOI; o, err = it.Next() {
-		out = append(out, o)
+		if !s.reverse {
+			out = append(out, o)
+		} else {
+			// insert with no additional slice allocation
+			out = append(out, nil)
+			copy(out[1:], out)
+			out[0] = o
+		}
 	}
 
 	// normal end of iterator
@@ -92,6 +111,6 @@ func (r *Search) Collect() (out []Object, err error) {
 }
 
 // Err return any error encountered while searching
-func (r *Search) Err() error {
-	return r.err
+func (s *Search) Err() error {
+	return s.err
 }
