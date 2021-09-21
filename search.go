@@ -75,6 +75,7 @@ func (s *Search) Reverse() *Search {
 	return s
 }
 
+// Limit the number of results collected by Collect function
 func (s *Search) Limit(limit uint64) *Search {
 	s.limit = limit
 	return s
