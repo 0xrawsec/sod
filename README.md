@@ -12,7 +12,7 @@ It supports structure fields indexing to speed up searches on important fields.
 
 What you should use this project for:
  * you want to implement Go struct persistency in a simple way
- * you want to be able to DB engine like operations on those structures (Update, Delete, Search ...)
+ * you want to do DB like operations on those structures (Update, Delete, Search ...)
  * you don't want to deploy an ORM framework
 
 What you should not use this project for:
