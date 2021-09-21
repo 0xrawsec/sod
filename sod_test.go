@@ -366,6 +366,10 @@ func TestSearchOrder(t *testing.T) {
 				t.Error("order is not correct")
 			}
 		}
+
+		if len(sr) != size {
+			t.Error("normal order results are missing")
+		}
 	}
 
 	// testing reversed output
@@ -381,11 +385,31 @@ func TestSearchOrder(t *testing.T) {
 				continue
 			}
 			if ts.A < prev.A {
-				t.Error("reversed order is not correct")
+				t.Error("reverse order is not correct")
 			}
 		}
-	}
 
+		if len(sr) != size {
+			t.Error("reverse ordered results are missing")
+		}
+	}
+}
+
+func TestSearchLimit(t *testing.T) {
+	size := 100
+	limit := uint64(10)
+	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A")}
+	db := createFreshTestDb(size, s)
+
+	// testing normal output
+	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Limit(limit).Collect(); err != nil {
+		t.Error(err)
+	} else {
+		if uint64(len(sr)) > limit {
+			t.Error("more results than expected")
+		}
+		t.Logf("Expecting %d results, got %d", limit, len(sr))
+	}
 }
 
 func TestSearchError(t *testing.T) {

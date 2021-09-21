@@ -1,17 +1,20 @@
 package sod
 
+import "math"
+
 // Search helper structure to easily build search queries on objects
 // and retrieve the results
 type Search struct {
 	db      *DB
 	object  Object
 	fields  []*IndexedField
+	limit   uint64
 	reverse bool
 	err     error
 }
 
 func newSearch(db *DB, o Object, f []*IndexedField, err error) *Search {
-	return &Search{db: db, object: o, fields: f, err: err}
+	return &Search{db: db, object: o, fields: f, limit: math.MaxUint, err: err}
 }
 
 // And performs a new Search while "ANDing" search results
@@ -72,6 +75,11 @@ func (s *Search) Reverse() *Search {
 	return s
 }
 
+func (s *Search) Limit(limit uint64) *Search {
+	s.limit = limit
+	return s
+}
+
 // Collect all the objects resulting from the search.
 // If a search has been made on an indexed field, results
 // will be in descending order by default. If you want to change
@@ -90,16 +98,21 @@ func (s *Search) Collect() (out []Object, err error) {
 		return
 	}
 
+	if s.reverse {
+		it.Reverse()
+	}
+
 	out = make([]Object, 0, it.Len())
-	for o, err = it.Next(); err == nil && err != ErrEOI; o, err = it.Next() {
-		if !s.reverse {
-			out = append(out, o)
-		} else {
+	for o, err = it.Next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.Next() {
+		//if !s.reverse {
+		out = append(out, o)
+		/*} else {
 			// insert with no additional slice allocation
 			out = append(out, nil)
 			copy(out[1:], out)
 			out[0] = o
-		}
+		}*/
+		s.limit--
 	}
 
 	// normal end of iterator
