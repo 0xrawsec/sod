@@ -50,7 +50,7 @@ func NewIndex(fields ...FieldDescriptor) *Index {
 		ObjectIds: make(map[uint64]string)}
 
 	for _, fd := range fields {
-		if fd.Index {
+		if fd.Index || fd.Unique {
 			i.Fields[fd.Name] = NewFieldIndex(fd)
 		}
 	}
