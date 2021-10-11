@@ -1,6 +1,17 @@
 package sod
 
-import "math"
+import (
+	"errors"
+	"math"
+)
+
+var (
+	ErrNoObjectFound = errors.New("no object found")
+)
+
+func IsNoObjectFound(err error) bool {
+	return errors.Is(err, ErrNoObjectFound)
+}
 
 // Search helper structure to easily build search queries on objects
 // and retrieve the results
@@ -81,6 +92,22 @@ func (s *Search) Limit(limit uint64) *Search {
 	return s
 }
 
+// One returns the first result found calling Collect function.
+// If no Object is found, ErrNoObjectFound is returned
+func (s *Search) One() (o Object, err error) {
+	var sr []Object
+
+	if s.Len() > 0 {
+		if sr, err = s.Collect(); err != nil {
+			return
+		}
+		o = sr[0]
+		return
+	}
+	err = ErrNoObjectFound
+	return
+}
+
 // Collect all the objects resulting from the search.
 // If a search has been made on an indexed field, results
 // will be in descending order by default. If you want to change
@@ -105,14 +132,7 @@ func (s *Search) Collect() (out []Object, err error) {
 
 	out = make([]Object, 0, it.Len())
 	for o, err = it.Next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.Next() {
-		//if !s.reverse {
 		out = append(out, o)
-		/*} else {
-			// insert with no additional slice allocation
-			out = append(out, nil)
-			copy(out[1:], out)
-			out[0] = o
-		}*/
 		s.limit--
 	}
 

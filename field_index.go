@@ -160,6 +160,12 @@ func (f *IndexedField) Evaluate(operator string, other *IndexedField) bool {
 	}
 }
 
+type FieldDescriptor struct {
+	Name   string
+	Index  bool
+	Unique bool
+}
+
 // fieldIndex structure
 // by convention the smallest value is at the end
 type fieldIndex struct {
@@ -167,18 +173,16 @@ type fieldIndex struct {
 	// Because of JSON serialization the original type is lost as
 	// IndexedField.Value is an interface{}
 	Cast      string          `json:"cast"`
+	Unique    bool            `json:"unique"`
 	Index     []*IndexedField `json:"index"`
 	objectIds map[uint64]*IndexedField
 }
 
-/*func (i *fieldIndex) MarshalJSON() ([]byte, error) {
-	return json.Marshal(i)
-}*/
-
 func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	type tmp struct {
-		Cast  string
-		Index []*IndexedField
+		Cast   string          `json:"cast"`
+		Unique bool            `json:"unique"`
+		Index  []*IndexedField `json:"index"`
 	}
 	t := tmp{}
 	if err := json.Unmarshal(data, &t); err != nil {
@@ -186,6 +190,7 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	}
 
 	i.Cast = t.Cast
+	i.Unique = t.Unique
 	i.Index = t.Index
 	for _, f := range i.Index {
 		f.ValueTypeFromString(i.Cast)
@@ -200,7 +205,7 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 
 // NewFieldIndex returns an empty initialized slice. Opts takes len and cap in
 // order to initialize the underlying slice
-func NewFieldIndex(opts ...int) *fieldIndex {
+func NewFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 	l, c := 0, 0
 	if len(opts) >= 1 {
 		l = opts[0]
@@ -208,7 +213,9 @@ func NewFieldIndex(opts ...int) *fieldIndex {
 	if len(opts) >= 2 {
 		c = opts[1]
 	}
-	return &fieldIndex{Index: make([]*IndexedField, l, c),
+	return &fieldIndex{
+		Index:     make([]*IndexedField, l, c),
+		Unique:    desc.Unique,
 		objectIds: make(map[uint64]*IndexedField)}
 }
 
@@ -262,6 +269,10 @@ func (in *fieldIndex) rangeEqual(k *IndexedField) (i, j int) {
 	}
 	i++
 	return
+}
+
+func (in *fieldIndex) Has(value interface{}) bool {
+	return len(in.SearchEqual(value)) > 0
 }
 
 func (in *fieldIndex) SearchEqual(value interface{}) []*IndexedField {
@@ -421,7 +432,7 @@ func (in *fieldIndex) Delete(objid uint64) {
 // we can build some query logic based on that function searching an
 // index from the result of another index
 func (in *fieldIndex) Constrain(fields []*IndexedField) (new *fieldIndex) {
-	new = NewFieldIndex(0, len(fields))
+	new = NewFieldIndex(FieldDescriptor{}, 0, len(fields))
 	for _, fi := range fields {
 		if field, ok := in.objectIds[fi.ObjectId]; ok {
 			new.insert(field)

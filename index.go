@@ -10,8 +10,13 @@ import (
 var (
 	ErrUnkownField          = errors.New("unknown object field")
 	ErrFieldNotIndexed      = errors.New("field not indexed")
+	ErrFieldUnique          = errors.New("unique constraint on field")
 	ErrUnkownSearchOperator = errors.New("unknown search operator")
 )
+
+func IsUnique(err error) bool {
+	return errors.Is(err, ErrFieldUnique)
+}
 
 type jsonIndex struct {
 	Fields    map[string]*fieldIndex `json:"fields"`
@@ -38,14 +43,16 @@ func fieldByName(o Object, field string) (i interface{}, ok bool) {
 	return v.Interface(), v.IsValid()
 }
 
-func NewIndex(fields ...string) *Index {
+func NewIndex(fields ...FieldDescriptor) *Index {
 	i := &Index{i: 0,
 		uuids:     make(map[string]uint64),
 		Fields:    make(map[string]*fieldIndex),
 		ObjectIds: make(map[uint64]string)}
 
-	for _, f := range fields {
-		i.Fields[f] = NewFieldIndex()
+	for _, fd := range fields {
+		if fd.Index {
+			i.Fields[fd.Name] = NewFieldIndex(fd)
+		}
 	}
 
 	return i
@@ -92,11 +99,12 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 			}
 		}
 	} else {
-		// we insert
-		in.ObjectIds[in.i] = o.UUID()
-		in.uuids[o.UUID()] = in.i
 		for fn, fi := range in.Fields {
 			if v, ok := fieldByName(o, fn); ok {
+				if fi.Unique && fi.Has(v) {
+					return fmt.Errorf("%w %s", ErrFieldUnique, fn)
+				}
+
 				if err = fi.Insert(v, in.i); err != nil {
 					return
 				}
@@ -104,6 +112,9 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 				return fmt.Errorf("%w %s", ErrUnkownField, fn)
 			}
 		}
+		// we insert after any potential error
+		in.ObjectIds[in.i] = o.UUID()
+		in.uuids[o.UUID()] = in.i
 		in.i++
 	}
 	return nil

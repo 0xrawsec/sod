@@ -31,14 +31,9 @@ func main() {
 
 	os.RemoveAll(dbpath)
 
-	// we create an index on LastName and Age
-	index := sod.NewIndex("LastName", "Age")
-
-	s := &sod.Schema{Extension: ".json", ObjectsIndex: index}
-
 	db := sod.Open(dbpath)
 	// We need to create a directory and a schema to store Person structures
-	if err := db.Create(&Person{}, s); err != nil {
+	if err := db.Create(&Person{}, sod.DefaultSchema); err != nil {
 		panic(err)
 	}
 

@@ -12,7 +12,7 @@ func init() {
 }
 
 func randomIndex(size int) *fieldIndex {
-	i := NewFieldIndex(0, size)
+	i := NewFieldIndex(FieldDescriptor{}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int(), uint64(k))
 	}
@@ -48,7 +48,7 @@ func TestFieldByName(t *testing.T) {
 
 func TestSimpleIndex(t *testing.T) {
 	size := 1000
-	i := NewFieldIndex(0, size)
+	i := NewFieldIndex(FieldDescriptor{}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int()%50, uint64(k))
 	}

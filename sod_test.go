@@ -3,6 +3,7 @@ package sod
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -16,19 +17,27 @@ const (
 
 type testStruct struct {
 	Item
-	A int
-	B int
-	C string
-	D int16
-	E int32
-	F int64
-	G uint8
-	H uint16
-	I uint32
-	J uint64
-	K float64
-	L int8
-	M time.Time
+	A int       `sod:"index"`
+	B int       `sod:"index"`
+	C string    `sod:"index"`
+	D int16     `sod:"index"`
+	E int32     `sod:"index"`
+	F int64     `sod:"index"`
+	G uint8     `sod:"index"`
+	H uint16    `sod:"index"`
+	I uint32    `sod:"index"`
+	J uint64    `sod:"index"`
+	K float64   `sod:"index"`
+	L int8      `sod:"index"`
+	M time.Time `sod:"index"`
+	N uint
+}
+
+type testStructUnique struct {
+	Item
+	A int    `sod:"unique"`
+	B int32  `sod:"unique"`
+	C string `sod:"unique"`
 }
 
 func randMod(mod int) int {
@@ -56,6 +65,7 @@ func genTestStructs(n int) chan Object {
 				K: float64(randMod(42)),
 				L: int8(randMod(42)),
 				M: time.Now(),
+				N: uint(randMod(42)),
 			}
 			co <- ts
 		}
@@ -63,13 +73,15 @@ func genTestStructs(n int) chan Object {
 	return co
 }
 
-func createFreshTestDb(n int, s *Schema) *DB {
-	os.RemoveAll(dbpath)
-	db := Open(dbpath)
-	if s == nil {
-		s = &DefaultSchema
+func createFreshTestDb(n int, s Schema) *DB {
+	if err := os.RemoveAll(dbpath); err != nil {
+		panic(err)
 	}
-	db.Create(&testStruct{}, s)
+
+	db := Open(dbpath)
+	if err := db.Create(&testStruct{}, s); err != nil {
+		panic(err)
+	}
 	if err := db.InsertOrUpdateBulk(genTestStructs(n)); err != nil {
 		panic(err)
 	}
@@ -85,8 +97,7 @@ func TestSimpleDb(t *testing.T) {
 	os.RemoveAll(dbpath)
 	db := Open(dbpath)
 
-	s := Schema{Extension: ".json"}
-	db.Create(&testStruct{}, &s)
+	db.Create(&testStruct{}, DefaultSchema)
 
 	t1 := testStruct{A: 1, B: 2, C: "Test"}
 	if err := db.InsertOrUpdate(&t1); err != nil {
@@ -107,8 +118,8 @@ func TestSimpleDb(t *testing.T) {
 }
 
 func TestGetAll(t *testing.T) {
-	count := 100
-	db := createFreshTestDb(count, nil)
+	count := 200
+	db := createFreshTestDb(count, DefaultSchema)
 
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
@@ -147,7 +158,7 @@ func corruptFile(path string) {
 
 func TestCorruptedFiles(t *testing.T) {
 	count := 100
-	db := createFreshTestDb(count, nil)
+	db := createFreshTestDb(count, DefaultSchema)
 
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
@@ -175,7 +186,7 @@ func TestCorruptedFiles(t *testing.T) {
 func TestDrop(t *testing.T) {
 	n := 20
 	deln := 10
-	db := createFreshTestDb(n, nil)
+	db := createFreshTestDb(n, DefaultSchema)
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
 	} else {
@@ -224,12 +235,10 @@ func TestDrop(t *testing.T) {
 	}
 }
 func TestSchema(t *testing.T) {
-	var s *Schema
 	var err error
 
 	size := 100
-	s = &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 	db.Close()
 
 	db = Open(dbpath)
@@ -245,12 +254,11 @@ func TestSchema(t *testing.T) {
 }
 
 func TestCloseAndReopen(t *testing.T) {
-	var s *Schema
 	var err error
+	var s *Schema
 
 	size := 100
-	s = &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 
 	if err := db.Close(); err != nil {
 		t.Error(err)
@@ -258,6 +266,11 @@ func TestCloseAndReopen(t *testing.T) {
 
 	db = Open(dbpath)
 	defer db.Close()
+
+	if s, err = db.Schema(&testStruct{}); err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
 
 	// we insert some more data
 	for i := 0; i < size; i++ {
@@ -285,11 +298,9 @@ func TestCloseAndReopen(t *testing.T) {
 	}
 }
 func TestUpdateObject(t *testing.T) {
-	var s *Schema
 
 	size := 100
-	s = &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 	defer db.Close()
 
 	if s, err := db.All(&testStruct{}); err != nil {
@@ -317,11 +328,9 @@ func TestUpdateObject(t *testing.T) {
 }
 
 func TestIndexAllTypes(t *testing.T) {
-	var s *Schema
 
 	size := 100
-	s = &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C", "E", "F", "G", "H", "I", "J", "K", "L", "M")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 	db.Close()
 
 	db = Open(dbpath)
@@ -340,6 +349,7 @@ func TestIndexAllTypes(t *testing.T) {
 		And("K", "<", float32(42)).
 		And("L", "<", 42).
 		And("M", "<", time.Now()).
+		And("N", "<", uint(42)).
 		Collect(); err != nil {
 		t.Error(err)
 	}
@@ -347,8 +357,7 @@ func TestIndexAllTypes(t *testing.T) {
 
 func TestSearchOrder(t *testing.T) {
 	size := 100
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 
 	// testing normal output
 	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Collect(); err != nil {
@@ -398,8 +407,7 @@ func TestSearchOrder(t *testing.T) {
 func TestSearchLimit(t *testing.T) {
 	size := 100
 	limit := uint64(10)
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 
 	// testing normal output
 	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Limit(limit).Collect(); err != nil {
@@ -415,8 +423,7 @@ func TestSearchLimit(t *testing.T) {
 func TestSearchError(t *testing.T) {
 
 	size := 100
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C", "E", "F", "G", "H", "I", "J", "K", "L", "M")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 
 	if s := db.Search(&testStruct{}, "A", "<>", 42).And("B", "=", 42).Or("C", "=", "bar"); !errors.Is(s.Err(), ErrUnkownSearchOperator) {
 		t.Error("Should have raised error")
@@ -425,8 +432,7 @@ func TestSearchError(t *testing.T) {
 
 func TestUnknownObject(t *testing.T) {
 	size := 100
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C", "E", "F", "G", "H", "I", "J", "K", "L", "M")}
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 
 	type Unknown struct {
 		Item
@@ -446,5 +452,64 @@ func TestUnknownObject(t *testing.T) {
 
 	if err := db.Commit(&Unknown{}); err == nil {
 		t.Error("Should raise commit error")
+	}
+}
+
+func TestUniqueObject(t *testing.T) {
+
+	db := Open(dbpath)
+	defer db.Close()
+
+	// deleting old stuff
+	if err := db.Drop(); err != nil {
+		t.Error(err)
+	}
+
+	db.Create(&testStructUnique{}, DefaultSchema)
+
+	db.InsertOrUpdate(&testStructUnique{A: 42, B: 43, C: "foo"})
+
+	// n := because we already inserted one object
+	n := 0
+	for i := 0; i < 1000; i++ {
+		if rand.Int()%2 == 0 {
+			if err := db.InsertOrUpdate(&testStructUnique{A: 42}); !IsUnique(err) {
+				t.Error("Must have raised uniqueness error")
+			}
+			if err := db.InsertOrUpdate(&testStructUnique{B: 43}); !IsUnique(err) {
+				t.Error("Must have raised uniqueness error")
+			}
+			if err := db.InsertOrUpdate(&testStructUnique{C: "foo"}); !IsUnique(err) {
+				t.Error("Must have raised uniqueness error")
+			}
+		} else {
+			ts := testStructUnique{A: rand.Int(), B: rand.Int31()}
+			ts.C = fmt.Sprintf("bar%d%d", ts.A, ts.B)
+			if ts.A != 42 && ts.B != 43 {
+				if err := db.InsertOrUpdate(&ts); err != nil {
+					t.Error(err)
+				}
+				n++
+			}
+		}
+	}
+
+	if o, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); err != nil {
+		t.Error(err)
+	} else {
+		t.Logf("Found object, deleting it: %v", o)
+		if err = db.Delete(o); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if _, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); !IsNoObjectFound(err) {
+		t.Error("Object should have been deleted")
+	}
+
+	if count, err := db.Count(&testStructUnique{}); err != nil {
+		t.Error(err)
+	} else if n != count {
+		t.Errorf("Wrong number of objects in DB, expects %d != %d", n, count)
 	}
 }

@@ -9,9 +9,8 @@ import (
 )
 
 func TestSearchNoIndexObject(t *testing.T) {
-	s := &Schema{Extension: ".json"}
 	os.RemoveAll(dbpath)
-	db := createFreshTestDb(10000, s)
+	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
 	start := time.Now()
@@ -40,9 +39,8 @@ func TestSearchNoIndexObject(t *testing.T) {
 }
 
 func TestSearchIndexObject(t *testing.T) {
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
 	os.RemoveAll(dbpath)
-	db := createFreshTestDb(10000, s)
+	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
 	start := time.Now()
@@ -71,9 +69,8 @@ func TestSearchIndexObject(t *testing.T) {
 }
 
 func TestSearchOr(t *testing.T) {
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
 	os.RemoveAll(dbpath)
-	db := createFreshTestDb(10000, s)
+	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
 	start := time.Now()
@@ -97,12 +94,19 @@ func TestSearchOr(t *testing.T) {
 }
 
 func TestSearchDeleteObject(t *testing.T) {
+	var s *Schema
+	var err error
+
 	deln := 0
 	size := 10000
-	s := &Schema{Extension: ".json", ObjectsIndex: NewIndex("A", "B", "C")}
 	os.RemoveAll(dbpath)
-	db := createFreshTestDb(size, s)
+	db := createFreshTestDb(size, DefaultSchema)
 	defer db.Close()
+
+	if s, err = db.Schema(&testStruct{}); err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
 
 	for fn, fi := range s.ObjectsIndex.Fields {
 		t.Logf("FieldIndex %s size: %d", fn, fi.Len())

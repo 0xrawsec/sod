@@ -196,7 +196,7 @@ func Open(root string) *DB {
 }
 
 // Create a schema for an Object
-func (db *DB) Create(o Object, s *Schema) (err error) {
+func (db *DB) Create(o Object, s Schema) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
@@ -208,11 +208,11 @@ func (db *DB) Create(o Object, s *Schema) (err error) {
 	// we need to create a new schema
 	s.Initialize(o)
 
-	if err = db.saveSchema(o, s, false); err != nil {
+	if err = db.saveSchema(o, &s, false); err != nil {
 		return
 	}
 
-	db.schemas[stype(o)] = s
+	db.schemas[stype(o)] = &s
 
 	return
 }
@@ -325,30 +325,20 @@ func (db *DB) Iterator(of Object) (it *Iterator, err error) {
 	defer db.RUnlock()
 
 	var s *Schema
-	var entries []os.DirEntry
-
-	dir := db.oDir(of)
+	var uuids []string
 
 	if s, err = db.schema(of); err != nil {
 		return
 	}
 
-	if entries, err = os.ReadDir(dir); err != nil {
-		err = fmt.Errorf("failed to read object directory: %w", err)
-		return
-	}
-
-	uuids := make([]string, 0, len(entries))
-
-	for _, e := range entries {
-		if e.Type().IsRegular() {
-			uuid, ext := uuidExt(e.Name())
-			if ext == s.Extension {
-				if uuidRegexp.MatchString(uuid) {
-					uuids = append(uuids, uuid)
-				}
-			}
+	if s.ObjectsIndex != nil {
+		uuids = make([]string, 0, len(s.ObjectsIndex.uuids))
+		for uuid := range s.ObjectsIndex.uuids {
+			uuids = append(uuids, uuid)
 		}
+	} else {
+		err = fmt.Errorf("%T %w", stype(of), ErrMissingObjIndex)
+		return
 	}
 
 	// building up the iterator
@@ -394,6 +384,12 @@ func (db *DB) DeleteAll(of Object) (err error) {
 			return
 		}
 	}
+
+	// end of iterator is not considered as an error to report
+	if err == ErrEOI {
+		err = nil
+	}
+
 	return
 }
 
