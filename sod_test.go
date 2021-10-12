@@ -563,6 +563,10 @@ func TestUniqueObject(t *testing.T) {
 
 	// reopening
 	db = Open(dbpath)
+	// test inserting after re-opening
+	if err := db.InsertOrUpdate(&testStructUnique{A: 42}); !IsUnique(err) {
+		t.Error("Must have raised uniqueness error")
+	}
 
 	if o, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); err != nil {
 		t.Error(err)

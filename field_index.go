@@ -165,9 +165,8 @@ type Constraints struct {
 }
 
 type FieldDescriptor struct {
-	Name  string `json:"-"`
-	Index bool   `json:"-"`
-	//Unique bool   `json:"unique"`
+	Name       string      `json:"-"`
+	Index      bool        `json:"-"`
 	Constraint Constraints `json:"constraint"`
 }
 
@@ -185,9 +184,9 @@ type fieldIndex struct {
 
 func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	type tmp struct {
-		Cast       string          `json:"cast"`
-		Constraint Constraints     `json:"constraint"`
-		Index      []*IndexedField `json:"index"`
+		Cast        string          `json:"cast"`
+		Constraints Constraints     `json:"constraints"`
+		Index       []*IndexedField `json:"index"`
 	}
 	t := tmp{}
 	if err := json.Unmarshal(data, &t); err != nil {
@@ -195,7 +194,7 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	}
 
 	i.Cast = t.Cast
-	i.Constraints = t.Constraint
+	i.Constraints = t.Constraints
 	i.Index = t.Index
 	for _, f := range i.Index {
 		f.ValueTypeFromString(i.Cast)
