@@ -23,9 +23,13 @@ func (it *Iterator) Reverse() *Iterator {
 	return it
 }
 
+func (it *Iterator) object() Object {
+	return reflect.New(it.t).Interface().(Object)
+}
+
 func (it *Iterator) Next() (o Object, err error) {
 	if it.i < len(it.uuids) && it.i >= 0 {
-		o = reflect.New(it.t).Interface().(Object)
+		o = it.object()
 		o.Initialize(it.uuids[it.i])
 		err = it.db.Get(o)
 		if it.reverse {

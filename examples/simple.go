@@ -33,7 +33,7 @@ func main() {
 
 	db := sod.Open(dbpath)
 	// We need to create a directory and a schema to store Person structures
-	if err := db.Create(&UniquePerson{}, sod.DefaultSchema); err != nil {
+	if err := db.Create(&Person{}, sod.DefaultSchema); err != nil {
 		panic(err)
 	}
 

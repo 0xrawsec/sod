@@ -160,10 +160,15 @@ func (f *IndexedField) Evaluate(operator string, other *IndexedField) bool {
 	}
 }
 
+type Constraints struct {
+	Unique bool `json:"unique"`
+}
+
 type FieldDescriptor struct {
-	Name   string
-	Index  bool
-	Unique bool
+	Name  string `json:"-"`
+	Index bool   `json:"-"`
+	//Unique bool   `json:"unique"`
+	Constraint Constraints `json:"constraint"`
 }
 
 // fieldIndex structure
@@ -172,17 +177,17 @@ type fieldIndex struct {
 	// Cast is used to store type casting for the field value.
 	// Because of JSON serialization the original type is lost as
 	// IndexedField.Value is an interface{}
-	Cast      string          `json:"cast"`
-	Unique    bool            `json:"unique"`
-	Index     []*IndexedField `json:"index"`
-	objectIds map[uint64]*IndexedField
+	Cast        string          `json:"cast"`
+	Constraints Constraints     `json:"constraints"`
+	Index       []*IndexedField `json:"index"`
+	objectIds   map[uint64]*IndexedField
 }
 
 func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	type tmp struct {
-		Cast   string          `json:"cast"`
-		Unique bool            `json:"unique"`
-		Index  []*IndexedField `json:"index"`
+		Cast       string          `json:"cast"`
+		Constraint Constraints     `json:"constraint"`
+		Index      []*IndexedField `json:"index"`
 	}
 	t := tmp{}
 	if err := json.Unmarshal(data, &t); err != nil {
@@ -190,15 +195,15 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	}
 
 	i.Cast = t.Cast
-	i.Unique = t.Unique
+	i.Constraints = t.Constraint
 	i.Index = t.Index
 	for _, f := range i.Index {
 		f.ValueTypeFromString(i.Cast)
 	}
 
 	i.objectIds = make(map[uint64]*IndexedField)
-	for j, k := range i.Index {
-		i.objectIds[uint64(j)] = k
+	for _, k := range i.Index {
+		i.objectIds[k.ObjectId] = k
 	}
 	return nil
 }
@@ -214,9 +219,9 @@ func NewFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 		c = opts[1]
 	}
 	return &fieldIndex{
-		Index:     make([]*IndexedField, l, c),
-		Unique:    desc.Unique,
-		objectIds: make(map[uint64]*IndexedField)}
+		Index:       make([]*IndexedField, l, c),
+		Constraints: desc.Constraint,
+		objectIds:   make(map[uint64]*IndexedField)}
 }
 
 func (in *fieldIndex) Initialize(k *IndexedField) {
@@ -268,6 +273,15 @@ func (in *fieldIndex) rangeEqual(k *IndexedField) (i, j int) {
 	for i = j; i >= 0 && in.Index[i].Equal(k); i-- {
 	}
 	i++
+	return
+}
+
+// Satisfy checks whether the value satisfies the constraints fixed by index
+func (in *fieldIndex) Satisfy(value interface{}) (err error) {
+	constraint := in.Constraints
+	if constraint.Unique && in.Has(value) {
+		return ErrFieldUnique
+	}
 	return
 }
 
@@ -425,6 +439,8 @@ func (in *fieldIndex) Delete(objid uint64) {
 		} else {
 			panic("key not found")
 		}
+	} else {
+		panic("object id not found")
 	}
 }
 

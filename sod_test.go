@@ -73,10 +73,14 @@ func genTestStructs(n int) chan Object {
 	return co
 }
 
-func createFreshTestDb(n int, s Schema) *DB {
+func cleanup() {
 	if err := os.RemoveAll(dbpath); err != nil {
 		panic(err)
 	}
+}
+
+func createFreshTestDb(n int, s Schema) *DB {
+	cleanup()
 
 	db := Open(dbpath)
 	if err := db.Create(&testStruct{}, s); err != nil {
@@ -87,6 +91,14 @@ func createFreshTestDb(n int, s Schema) *DB {
 	}
 	return db
 }
+
+func controlDB(t *testing.T, db *DB) {
+	if err := db.Control(); err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+}
+
 func TestTypeof(t *testing.T) {
 	if typeof(&testStruct{}) != typeof(testStruct{}) {
 		t.Error("Unexpected typeof behaviour")
@@ -96,6 +108,7 @@ func TestTypeof(t *testing.T) {
 func TestSimpleDb(t *testing.T) {
 	os.RemoveAll(dbpath)
 	db := Open(dbpath)
+	defer controlDB(t, db)
 
 	db.Create(&testStruct{}, DefaultSchema)
 
@@ -120,6 +133,7 @@ func TestSimpleDb(t *testing.T) {
 func TestGetAll(t *testing.T) {
 	count := 200
 	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
 
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
@@ -159,6 +173,7 @@ func corruptFile(path string) {
 func TestCorruptedFiles(t *testing.T) {
 	count := 100
 	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
 
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
@@ -187,6 +202,8 @@ func TestDrop(t *testing.T) {
 	n := 20
 	deln := 10
 	db := createFreshTestDb(n, DefaultSchema)
+	defer controlDB(t, db)
+
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
 	} else {
@@ -239,6 +256,7 @@ func TestSchema(t *testing.T) {
 
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 	db.Close()
 
 	db = Open(dbpath)
@@ -259,12 +277,14 @@ func TestCloseAndReopen(t *testing.T) {
 
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 
 	if err := db.Close(); err != nil {
 		t.Error(err)
 	}
 
 	db = Open(dbpath)
+	defer controlDB(t, db)
 	defer db.Close()
 
 	if s, err = db.Schema(&testStruct{}); err != nil {
@@ -301,6 +321,7 @@ func TestUpdateObject(t *testing.T) {
 
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 	defer db.Close()
 
 	if s, err := db.All(&testStruct{}); err != nil {
@@ -325,12 +346,21 @@ func TestUpdateObject(t *testing.T) {
 		}
 	}
 
+	if s, err := db.Schema(&testStruct{}); err != nil {
+		t.Error(err)
+	} else {
+		if err = s.ObjectsIndex.Control(); err != nil {
+			t.Error(err)
+		}
+	}
+
 }
 
 func TestIndexAllTypes(t *testing.T) {
 
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 	db.Close()
 
 	db = Open(dbpath)
@@ -358,6 +388,7 @@ func TestIndexAllTypes(t *testing.T) {
 func TestSearchOrder(t *testing.T) {
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 
 	// testing normal output
 	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Collect(); err != nil {
@@ -408,6 +439,7 @@ func TestSearchLimit(t *testing.T) {
 	size := 100
 	limit := uint64(10)
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 
 	// testing normal output
 	if sr, err := db.Search(&testStruct{}, "A", "<", 42).Limit(limit).Collect(); err != nil {
@@ -424,6 +456,7 @@ func TestSearchError(t *testing.T) {
 
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 
 	if s := db.Search(&testStruct{}, "A", "<>", 42).And("B", "=", 42).Or("C", "=", "bar"); !errors.Is(s.Err(), ErrUnkownSearchOperator) {
 		t.Error("Should have raised error")
@@ -433,6 +466,7 @@ func TestSearchError(t *testing.T) {
 func TestUnknownObject(t *testing.T) {
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
 
 	type Unknown struct {
 		Item
@@ -455,21 +489,49 @@ func TestUnknownObject(t *testing.T) {
 	}
 }
 
+func TestDBBulkDeletion(t *testing.T) {
+	// testing bulk object deletion
+	size := 10000
+	ndel := 0
+	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
+
+	if s := db.Search(&testStruct{}, "A", ">=", 12); s.Err() != nil {
+		t.Error(s.Err())
+	} else {
+		ndel = s.Len()
+		t.Logf("Deleting %d entries", s.Len())
+		if err := s.Delete(); err != nil {
+			t.Log(err)
+		}
+
+		// controlling size after deletion
+		if n, err := db.Count(&testStruct{}); err != nil {
+			t.Error(err)
+		} else if n != size-s.Len() {
+			t.Error("Bulk delete failed")
+		}
+	}
+
+	db = Open(dbpath)
+	// controlling size after re-opening the DB
+	if n, err := db.Count(&testStruct{}); err != nil {
+		t.Error(err)
+	} else if n != size-ndel {
+		t.Errorf("Bulk delete failed expecting size=%d, got %d", size-ndel, n)
+	}
+}
+
 func TestUniqueObject(t *testing.T) {
+	cleanup()
 
 	db := Open(dbpath)
-	defer db.Close()
-
-	// deleting old stuff
-	if err := db.Drop(); err != nil {
-		t.Error(err)
-	}
+	defer controlDB(t, db)
 
 	db.Create(&testStructUnique{}, DefaultSchema)
 
 	db.InsertOrUpdate(&testStructUnique{A: 42, B: 43, C: "foo"})
 
-	// n := because we already inserted one object
 	n := 0
 	for i := 0; i < 1000; i++ {
 		if rand.Int()%2 == 0 {
@@ -494,6 +556,14 @@ func TestUniqueObject(t *testing.T) {
 		}
 	}
 
+	// closing DB
+	if err := db.Close(); err != nil {
+		t.Error(err)
+	}
+
+	// reopening
+	db = Open(dbpath)
+
 	if o, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); err != nil {
 		t.Error(err)
 	} else {
@@ -503,7 +573,19 @@ func TestUniqueObject(t *testing.T) {
 		}
 	}
 
+	// closing DB
+	if err := db.Close(); err != nil {
+		t.Error(err)
+	}
+
+	// reopening
+	t.Logf("Reopening DB")
+	db = Open(dbpath)
+
 	if _, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); !IsNoObjectFound(err) {
+		if err != nil && !IsNoObjectFound(err) {
+			t.Error(err)
+		}
 		t.Error("Object should have been deleted")
 	}
 
@@ -511,5 +593,80 @@ func TestUniqueObject(t *testing.T) {
 		t.Error(err)
 	} else if n != count {
 		t.Errorf("Wrong number of objects in DB, expects %d != %d", n, count)
+	} else {
+		t.Logf("%d objects in DB", count)
 	}
+}
+
+func TestDeleteUniqueObject(t *testing.T) {
+	cleanup()
+
+	size := 1000
+	db := Open(dbpath)
+	defer controlDB(t, db)
+
+	db.Create(&testStructUnique{}, DefaultSchema)
+
+	// inserting objects
+	for i := 0; i < size; {
+		ts := testStructUnique{A: rand.Int(), B: rand.Int31(), C: fmt.Sprintf("bar-%d", rand.Int())}
+		if err := db.insertOrUpdate(&ts, false); err != nil && !IsUnique(err) {
+			t.Error(err)
+			t.FailNow()
+		} else if !IsUnique(err) {
+			i++
+		}
+	}
+	db.Close()
+
+	db = Open(dbpath)
+	defer controlDB(t, db)
+
+	// we control that we have the good number of objects
+	if n, err := db.Count(&testStructUnique{}); err != nil {
+		t.Error(err)
+	} else if n != size {
+		t.Errorf("Wrong number of objects in DB, expects %d != %d", size, n)
+	}
+
+	ndel := 0
+	deleted := make([]Object, 0)
+	if obj, err := db.All(&testStructUnique{}); err != nil {
+		t.Error(err)
+	} else {
+		// deleting objects
+		for _, o := range obj {
+			if rand.Int()%2 == 0 {
+				db.delete(o)
+				deleted = append(deleted, o)
+				ndel++
+			}
+		}
+	}
+	db.Close()
+
+	db = Open(dbpath)
+	defer controlDB(t, db)
+
+	// we check that all objects deleted are not in the DB anymore
+	for _, o := range deleted {
+		ts := o.(*testStructUnique)
+		if _, err := db.Search(&testStructUnique{}, "A", "=", ts.A).
+			Or("B", "=", ts.B).
+			Or("C", "=", ts.C).One(); !IsNoObjectFound(err) {
+			if err != nil {
+				t.Error(err)
+			} else {
+				t.Error("Object must not be in database")
+			}
+		}
+	}
+
+	// we control that we have the good number of objects
+	if n, err := db.Count(&testStructUnique{}); err != nil {
+		t.Error(err)
+	} else if n != size-ndel {
+		t.Errorf("Wrong number of objects in DB, expects %d != %d", size, n)
+	}
+
 }

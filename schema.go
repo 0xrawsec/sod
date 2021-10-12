@@ -38,7 +38,7 @@ func (s *Schema) Initialize(o Object) {
 					fd.Index = true
 				case "unique":
 					fd.Index = true
-					fd.Unique = true
+					fd.Constraint.Unique = true
 				}
 			}
 			if fd.Index {
@@ -58,4 +58,8 @@ func (s *Schema) Index(o Object) error {
 
 func (s *Schema) Unindex(o Object) {
 	s.ObjectsIndex.Delete(o)
+}
+
+func (s *Schema) control() error {
+	return s.ObjectsIndex.Control()
 }

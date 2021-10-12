@@ -269,3 +269,15 @@ func TestIndexDelete(t *testing.T) {
 		t.Errorf("Wrong index size, expecting %d got %d", size-del, i.Len())
 	}
 }
+
+func TestIndexUpdate(t *testing.T) {
+	size := 10000
+	i := randomIndex(size)
+	for j := 0; j < i.Len(); j++ {
+		i.Update(rand.Int(), uint64(j))
+	}
+
+	if i.Len() != size {
+		t.Error("Wrong size after update")
+	}
+}

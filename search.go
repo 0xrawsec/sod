@@ -80,6 +80,17 @@ func (s *Search) Iterator() (it *Iterator, err error) {
 	return
 }
 
+// Delete deletes the objects found by the search
+func (s *Search) Delete() (err error) {
+	var it *Iterator
+
+	if it, err = s.Iterator(); err != nil {
+		return
+	}
+
+	return s.db.DeleteObjects(it)
+}
+
 // Reverse the order the results are collected by Collect function
 func (s *Search) Reverse() *Search {
 	s.reverse = true

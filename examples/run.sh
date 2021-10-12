@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 for example in `find $(dirname $(realpath $0)) -type f -name '*.go'`
 do

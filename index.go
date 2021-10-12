@@ -50,7 +50,7 @@ func NewIndex(fields ...FieldDescriptor) *Index {
 		ObjectIds: make(map[uint64]string)}
 
 	for _, fd := range fields {
-		if fd.Index || fd.Unique {
+		if fd.Index || fd.Constraint.Unique {
 			i.Fields[fd.Name] = NewFieldIndex(fd)
 		}
 	}
@@ -86,7 +86,25 @@ func (in *Index) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (in *Index) SatisfyAll(o Object) (err error) {
+	for fn, fi := range in.Fields {
+		if v, ok := fieldByName(o, fn); ok {
+			// check constraint on value
+			if err = fi.Satisfy(v); err != nil {
+				return fmt.Errorf("%s does not satisfy constraint: %w", fn, err)
+			}
+		}
+	}
+	return
+}
+
 func (in *Index) InsertOrUpdate(o Object) (err error) {
+	// check constraint on all index first to prevent
+	// inconsistencies across indexes
+	if err = in.SatisfyAll(o); err != nil {
+		return
+	}
+
 	// the object is already known, we update
 	if i, ok := in.uuids[o.UUID()]; ok {
 		for fn, fi := range in.Fields {
@@ -101,10 +119,6 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 	} else {
 		for fn, fi := range in.Fields {
 			if v, ok := fieldByName(o, fn); ok {
-				if fi.Unique && fi.Has(v) {
-					return fmt.Errorf("%w %s", ErrFieldUnique, fn)
-				}
-
 				if err = fi.Insert(v, in.i); err != nil {
 					return
 				}
@@ -124,14 +138,10 @@ func (in *Index) Delete(o Object) {
 	if index, ok := in.uuids[o.UUID()]; ok {
 		for _, fi := range in.Fields {
 			fi.Delete(index)
-			delete(in.ObjectIds, index)
-			delete(in.uuids, o.UUID())
 		}
+		delete(in.ObjectIds, index)
+		delete(in.uuids, o.UUID())
 	}
-}
-
-func (in *Index) Len() int {
-	return len(in.ObjectIds)
 }
 
 func (in *Index) Search(o Object, field string, operator string, value interface{}, constrain []*IndexedField) ([]*IndexedField, error) {
@@ -163,4 +173,20 @@ func (in *Index) Search(o Object, field string, operator string, value interface
 
 		return nil, fmt.Errorf("%w %s for object %T", ErrUnkownField, field, o)
 	}
+}
+
+func (in *Index) Control() error {
+	for fn := range in.Fields {
+		if !in.Fields[fn].Control() {
+			return fmt.Errorf("field index %s is not ordered", fn)
+		}
+		if in.Fields[fn].Len() != in.Len() {
+			return fmt.Errorf("index and fields index must have the same size, len(index)=%d len(index[%s])=%d", in.Len(), fn, in.Fields[fn].Len())
+		}
+	}
+	return nil
+}
+
+func (in *Index) Len() int {
+	return len(in.ObjectIds)
 }

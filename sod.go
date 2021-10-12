@@ -168,6 +168,21 @@ func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
 
 }
 
+func (db *DB) delete(o Object) (err error) {
+	var s *Schema
+	var path string
+
+	if s, err = db.schema(o); err != nil {
+		return
+	}
+
+	// Unindexing object
+	s.Unindex(o)
+	path = filepath.Join(db.oDir(o), filename(o, s))
+
+	return os.Remove(path)
+}
+
 func (db *DB) search(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
 	var s *Schema
 	var f []*IndexedField
@@ -368,19 +383,24 @@ func (db *DB) Drop() (err error) {
 	return os.RemoveAll(path)
 }
 
-// DeleteAll deletes all Objects of the same type.
-// If object is indexed, DB must be committed to make
-// the changes of the index persistent
+// DeleteAll deletes all Objects of the same type and commit changes
 func (db *DB) DeleteAll(of Object) (err error) {
 	var it *Iterator
-	var o Object
-
 	if it, err = db.Iterator(of); err != nil {
 		return
 	}
+	return db.DeleteObjects(it)
+}
 
-	for o, err = it.Next(); err == nil || err != ErrEOI; o, err = it.Next() {
-		if err = db.Delete(o); err != nil {
+// DeleteObjects deletes Objects from an Iterator and commit changes.
+// This primitive can be used for bulk deletions.
+func (db *DB) DeleteObjects(from *Iterator) (err error) {
+	var o Object
+
+	defer db.commit(from.object())
+
+	for o, err = from.Next(); err == nil || err != ErrEOI; o, err = from.Next() {
+		if err = db.delete(o); err != nil {
 			return
 		}
 	}
@@ -393,25 +413,19 @@ func (db *DB) DeleteAll(of Object) (err error) {
 	return
 }
 
-// Delete deletes a single Object from the database.
-// If object is indexed DB must be committed to make
-// the changes of the index persistent
-func (db *DB) Delete(o Object) (err error) {
+// Delete deletes a single Object from the database and commit changes
+func (db *DB) Delete(o Object) (lastErr error) {
 	db.Lock()
 	defer db.Unlock()
-	var s *Schema
-	var path string
-
-	if s, err = db.schema(o); err != nil {
-		return
+	if err := db.delete(o); err != nil {
+		lastErr = err
 	}
 
-	// Unindexing object
-	s.Unindex(o)
+	if err := db.commit(o); err != nil {
+		lastErr = err
+	}
 
-	path = filepath.Join(db.oDir(o), filename(o, s))
-
-	return os.Remove(path)
+	return
 }
 
 // Exist returns true if the object exist.
@@ -464,6 +478,19 @@ func (db *DB) commit(o Object) (err error) {
 		return
 	}
 
+	return
+}
+
+// Control controls checks for inconsistencies in DB
+func (db *DB) Control() (err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	for _, s := range db.schemas {
+		if err = s.control(); err != nil {
+			return
+		}
+	}
 	return
 }
 

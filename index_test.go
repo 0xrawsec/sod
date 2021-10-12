@@ -119,7 +119,7 @@ func TestSearchDeleteObject(t *testing.T) {
 		for _, o := range s {
 			if rand.Int()%2 == 0 {
 				t := o.(*testStruct)
-				db.Delete(t)
+				db.delete(t)
 				deln++
 			}
 		}
