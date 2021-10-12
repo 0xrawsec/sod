@@ -551,6 +551,10 @@ func TestUniqueObject(t *testing.T) {
 				if err := db.InsertOrUpdate(&ts); err != nil {
 					t.Error(err)
 				}
+				// reinserting same object should work
+				if err := db.InsertOrUpdate(&ts); err != nil {
+					t.Error(err)
+				}
 				n++
 			}
 		}

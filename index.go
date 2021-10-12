@@ -90,9 +90,12 @@ func (in *Index) SatisfyAll(o Object) (err error) {
 	for fn, fi := range in.Fields {
 		if v, ok := fieldByName(o, fn); ok {
 			// check constraint on value
-			if err = fi.Satisfy(v); err != nil {
+			objid, exists := in.uuids[o.UUID()]
+			if err = fi.Satisfy(objid, exists, v); err != nil {
 				return fmt.Errorf("%s does not satisfy constraint: %w", fn, err)
 			}
+		} else {
+			return fmt.Errorf("%w %s", ErrUnkownField, fn)
 		}
 	}
 	return

@@ -276,10 +276,19 @@ func (in *fieldIndex) rangeEqual(k *IndexedField) (i, j int) {
 }
 
 // Satisfy checks whether the value satisfies the constraints fixed by index
-func (in *fieldIndex) Satisfy(value interface{}) (err error) {
+func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue interface{}) (err error) {
 	constraint := in.Constraints
-	if constraint.Unique && in.Has(value) {
-		return ErrFieldUnique
+	// handling uniqueness
+	if constraint.Unique {
+		equals := in.SearchEqual(fvalue)
+		if len(equals) > 1 {
+			return ErrFieldUnique
+		} else if len(equals) == 1 {
+			// objid == 0 if object does not exists so we need to check exist flag
+			if !exist || (equals[0].ObjectId != objid) {
+				return ErrFieldUnique
+			}
+		}
 	}
 	return
 }
