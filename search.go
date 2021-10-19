@@ -126,6 +126,9 @@ func (s *Search) One() (o Object, err error) {
 // NB: only search on indexed field(s) will be garanteed to be
 // ordered according to the last field searched.
 func (s *Search) Collect() (out []Object, err error) {
+	s.db.Lock()
+	defer s.db.Unlock()
+
 	var it *Iterator
 	var o Object
 
@@ -142,7 +145,7 @@ func (s *Search) Collect() (out []Object, err error) {
 	}
 
 	out = make([]Object, 0, it.Len())
-	for o, err = it.Next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.Next() {
+	for o, err = it.next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.next() {
 		out = append(out, o)
 		s.limit--
 	}

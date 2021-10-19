@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/google/uuid"
@@ -62,4 +63,13 @@ func isFileAndExist(path string) bool {
 		return false
 	}
 	return stat.Mode().IsRegular() && err == nil
+}
+
+func dbgLock(lock string) {
+	if pc, _, _, ok := runtime.Caller(2); ok {
+		fn := runtime.FuncForPC(pc).Name()
+		fmt.Fprintf(os.Stderr, "%s: %s\n", lock, fn)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s\n", lock)
+	}
 }

@@ -1,6 +1,7 @@
 package sod
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -20,9 +22,56 @@ var (
 	uuidRegexp = regexp.MustCompile(`(?i:^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$)`)
 )
 
+type objectStore struct {
+	m map[string]map[string]Object
+}
+
+func newObjectStore() *objectStore {
+	return &objectStore{make(map[string]map[string]Object)}
+}
+
+func (c *objectStore) key(o Object) string {
+	return stype(o)
+}
+
+func (c *objectStore) put(o Object) {
+	k := stype(o)
+	if _, ok := c.m[k]; !ok {
+		c.m[k] = make(map[string]Object)
+	}
+	c.m[k][o.UUID()] = o
+}
+
+func (c *objectStore) get(in Object) (out Object, ok bool) {
+	k := stype(in)
+	if _, ok = c.m[k]; ok {
+		out, ok = c.m[k][in.UUID()]
+	}
+	return
+}
+
+func (c *objectStore) delete(o Object) {
+	k := stype(o)
+	if _, ok := c.m[k]; ok {
+		delete(c.m[k], o.UUID())
+	}
+}
+
+func (c *objectStore) count(of Object) (n int) {
+	k := stype(of)
+	if _, ok := c.m[k]; ok {
+		return len(c.m[k])
+	}
+	return
+}
+
 type DB struct {
-	sync.RWMutex
+	l       sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
 	root    string
+	cache   *objectStore
+	asyncw  *objectStore
 	schemas map[string]*Schema
 }
 
@@ -74,10 +123,38 @@ func (db *DB) loadSchema(of Object) (s *Schema, err error) {
 	return
 }
 
+func (db *DB) startAsyncWritesRoutine(s *Schema) {
+	step := time.Millisecond * 100
+	if s.asyncWritesEnabled() && !s.AsyncWrites.routineStarted {
+		s.AsyncWrites.routineStarted = true
+		go func() {
+			for db.ctx.Err() == nil {
+				for slept := time.Duration(0); ; slept += step {
+					n := db.safeCountPendingAsyncW(s.object)
+					if n >= s.AsyncWrites.Threshold || slept >= s.AsyncWrites.Timeout {
+						if err := db.FlushAll(s.object); err != nil {
+							panic(err)
+						}
+						break
+					}
+					time.Sleep(step)
+				}
+			}
+		}()
+	}
+}
+
+func (db *DB) safeCountPendingAsyncW(of Object) (n int) {
+	db.RLock()
+	defer db.RUnlock()
+	return db.asyncw.count(of)
+}
+
 func (db *DB) schema(of Object) (s *Schema, err error) {
 	var ok bool
 
 	if s, ok = db.schemas[stype(of)]; ok {
+		db.startAsyncWritesRoutine(s)
 		return
 	}
 
@@ -95,23 +172,19 @@ func (db *DB) oDir(of Object) string {
 	return filepath.Join(db.root, db.itemname(of))
 }
 
-func (db *DB) oPath(of Object) (path string, err error) {
-	var s *Schema
-
-	if s, err = db.schema(of); err != nil {
-		return
-	}
-
-	return filepath.Join(db.oDir(of), filename(of, s)), nil
+func (db *DB) oPath(s *Schema, of Object) (path string) {
+	return filepath.Join(db.oDir(of), filename(of, s))
 }
 
 func (db *DB) exist(o Object) (ok bool, err error) {
 	var path string
+	var s *Schema
 
-	if path, err = db.oPath(o); err != nil {
+	if s, err = db.schema(o); err != nil {
 		return
 	}
 
+	path = db.oPath(s, o)
 	stat, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -119,9 +192,53 @@ func (db *DB) exist(o Object) (ok bool, err error) {
 	return stat.Mode().IsRegular() && err == nil, nil
 }
 
+func (db *DB) writeObject(o Object, path string) (err error) {
+	var data []byte
+
+	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
+		return
+	}
+
+	if data, err = json.Marshal(o); err != nil {
+		return
+	}
+
+	if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
+		return
+	}
+	return
+}
+
+// gets a single Object from the DB
+func (db *DB) get(in Object) (out Object, err error) {
+	var path string
+	var ok bool
+	var s *Schema
+
+	if s, err = db.schema(in); err != nil {
+		return
+	}
+
+	// we return object if cached
+	if s.mustCache() {
+		if out, ok = db.cache.get(in); ok {
+			return
+		}
+	}
+
+	path = filepath.Join(db.oDir(in), filename(in, s))
+	err = UnmarshalJsonFile(path, in)
+	out = in
+
+	// we cache the object
+	if s.mustCache() {
+		db.cache.put(out)
+	}
+	return
+}
+
 func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
 	var path string
-	var data []byte
 	var schema *Schema
 
 	// this is a new object, we have to handle here
@@ -140,32 +257,32 @@ func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
 		return
 	}
 
+	if schema.mustCache() {
+		db.cache.put(o)
+	}
+
 	if err = schema.Index(o); err != nil {
 		return
 	}
 
-	if path, err = db.oPath(o); err != nil {
-		return
-	}
+	if schema.asyncWritesEnabled() {
+		// we don't write object to disk but store
+		// it in a structure for later saving
+		db.asyncw.put(o)
+	} else {
+		// writing the object to disk
+		path = db.oPath(schema, o)
+		if err = db.writeObject(o, path); err != nil {
+			return
+		}
 
-	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
-		return
-	}
-
-	if data, err = json.Marshal(o); err != nil {
-		return
-	}
-
-	if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
-		return
-	}
-
-	if commit {
-		return db.commit(o)
+		// commiting schema and index to disk
+		if commit {
+			return db.commit(o)
+		}
 	}
 
 	return
-
 }
 
 func (db *DB) delete(o Object) (err error) {
@@ -176,7 +293,13 @@ func (db *DB) delete(o Object) (err error) {
 		return
 	}
 
-	// Unindexing object
+	// deleting from cache
+	if s.mustCache() {
+		db.cache.delete(o)
+		db.asyncw.delete(o)
+	}
+
+	// unindexing object
 	s.Unindex(o)
 	path = filepath.Join(db.oDir(o), filename(o, s))
 
@@ -203,11 +326,58 @@ func (db *DB) search(o Object, field, operator string, value interface{}, constr
 	}
 }
 
+func (db *DB) flushDB() (err error) {
+	for key := range db.asyncw.m {
+		var s *Schema
+		for _, o := range db.asyncw.m[key] {
+			// we get schema
+			if s == nil {
+				if s, err = db.schema(o); err != nil {
+					return
+				}
+			}
+			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+				err = e
+			}
+			// we delete object from the list of objects to write
+			db.asyncw.delete(o)
+		}
+	}
+	return
+}
+
 /***** Public Methods ******/
 
 // Open opens a Simple Object Database
 func Open(root string) *DB {
-	return &DB{root: root, schemas: map[string]*Schema{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &DB{
+		ctx:     ctx,
+		cancel:  cancel,
+		root:    root,
+		cache:   newObjectStore(),
+		asyncw:  newObjectStore(),
+		schemas: map[string]*Schema{}}
+}
+
+func (db *DB) Lock() {
+	//dbgLock("Lock")
+	db.l.Lock()
+}
+
+func (db *DB) RLock() {
+	//dbgLock("RLock")
+	db.l.RLock()
+}
+
+func (db *DB) Unlock() {
+	//dbgLock("Unlock")
+	db.l.Unlock()
+}
+
+func (db *DB) RUnlock() {
+	//dbgLock("RUnlock")
+	db.l.RUnlock()
 }
 
 // Create a schema for an Object
@@ -241,17 +411,11 @@ func (db *DB) Schema(of Object) (s *Schema, err error) {
 }
 
 // Get gets a single Object from the DB
-func (db *DB) Get(o Object) (err error) {
+func (db *DB) Get(in Object) (out Object, err error) {
 	db.RLock()
 	defer db.RUnlock()
 
-	var path string
-
-	if path, err = db.oPath(o); err != nil {
-		return err
-	}
-
-	return UnmarshalJsonFile(path, o)
+	return db.get(in)
 }
 
 // All returns all Objects in the DB
@@ -267,7 +431,7 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	}
 
 	out = make([]Object, 0, it.Len())
-	for o, err = it.Next(); err == nil && err != ErrEOI; o, err = it.Next() {
+	for o, err = it.next(); err == nil && err != ErrEOI; o, err = it.next() {
 		out = append(out, o)
 	}
 
@@ -395,11 +559,14 @@ func (db *DB) DeleteAll(of Object) (err error) {
 // DeleteObjects deletes Objects from an Iterator and commit changes.
 // This primitive can be used for bulk deletions.
 func (db *DB) DeleteObjects(from *Iterator) (err error) {
+	db.Lock()
+	defer db.Unlock()
+
 	var o Object
 
 	defer db.commit(from.object())
 
-	for o, err = from.Next(); err == nil || err != ErrEOI; o, err = from.Next() {
+	for o, err = from.next(); err == nil || err != ErrEOI; o, err = from.next() {
 		if err = db.delete(o); err != nil {
 			return
 		}
@@ -435,22 +602,43 @@ func (db *DB) Exist(o Object) (ok bool, err error) {
 	return db.exist(o)
 }
 
-// InsertOrUpdateBulk inserts objects in bulk in the DB. This
-// function is locking the DB and will terminate only when input
-// channel is closed
-func (db *DB) InsertOrUpdateBulk(in chan Object) (err error) {
-	db.Lock()
-	defer db.Unlock()
+// InsertOrUpdateBulk inserts objects in bulk in the DB. A chunk size needs to be
+// provided to commit the DB at every chunk. The DB is locked at every chunk
+// processed, so changing the chunk size impact other concurrent DB operations.
+func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (err error) {
 	var o Object
-
+	chunk := make([]Object, 0, csize)
 	for o = range in {
-		if err == nil {
-			err = db.insertOrUpdate(o, false)
+		chunk = append(chunk, o)
+		if len(chunk) == csize {
+			if e := db.InsertOrUpdateMany(chunk...); e != nil {
+				err = e
+			}
+			chunk = make([]Object, 0, csize)
 		}
 	}
 
-	if o != nil && err == nil {
-		return db.commit(o)
+	if e := db.InsertOrUpdateMany(chunk...); e == nil {
+		return e
+	}
+
+	return
+}
+
+func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	for _, o := range objects {
+		if e := db.insertOrUpdate(o, false); e != nil {
+			err = e
+		}
+	}
+
+	if len(objects) > 0 {
+		if e := db.commit(objects[0]); e != nil {
+			return e
+		}
 	}
 
 	return
@@ -503,10 +691,65 @@ func (db *DB) Commit(o Object) (err error) {
 	return db.commit(o)
 }
 
+// Flush a single object to disk
+func (db *DB) Flush(o Object) (err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	var s *Schema
+
+	if s, err = db.schema(o); err != nil {
+		return
+	}
+
+	if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+		err = e
+	}
+	// we delete object from the list of objects to save
+	db.asyncw.delete(o)
+
+	return
+}
+
+// FlushAll objects of type to disk
+func (db *DB) FlushAll(of Object) (err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	var s *Schema
+
+	if s, err = db.schema(of); err != nil {
+		return
+	}
+
+	key := db.asyncw.key(of)
+
+	if _, ok := db.asyncw.m[key]; ok {
+		for _, o := range db.asyncw.m[key] {
+			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+				err = e
+			}
+			// we delete object from the list of objects to save
+			db.asyncw.delete(o)
+		}
+	}
+
+	return
+}
+
 func (db *DB) Close() (last error) {
 	db.Lock()
 	defer db.Unlock()
 
+	// cancelling db context
+	db.cancel()
+
+	// flushing all the objects of all kinds on disk
+	if err := db.flushDB(); err != nil {
+		last = err
+	}
+
+	// committing all the schemas to disk
 	for _, s := range db.schemas {
 		if err := db.commit(s.object); err != nil {
 			last = err

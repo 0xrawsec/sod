@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -82,14 +83,32 @@ func cleanup() {
 func createFreshTestDb(n int, s Schema) *DB {
 	cleanup()
 
+	//s.AsyncWrites = &Async{Enable: true, Timeout: 5}
 	db := Open(dbpath)
 	if err := db.Create(&testStruct{}, s); err != nil {
 		panic(err)
 	}
-	if err := db.InsertOrUpdateBulk(genTestStructs(n)); err != nil {
+	if err := db.InsertOrUpdateBulk(genTestStructs(n), n/5); err != nil {
 		panic(err)
 	}
 	return db
+}
+
+func closeAndReOpen(db *DB) *DB {
+	if err := db.Close(); err != nil {
+		panic(err)
+	}
+	return Open(dbpath)
+}
+
+func controlDBSize(t *testing.T, db *DB, o Object, n int) {
+	if c, err := db.Count(o); err != nil {
+		t.Error(err)
+		t.FailNow()
+	} else if n != c {
+		t.Errorf("Wrong size, expecting %d, got %d", n, c)
+		t.FailNow()
+	}
 }
 
 func controlDB(t *testing.T, db *DB) {
@@ -121,31 +140,33 @@ func TestSimpleDb(t *testing.T) {
 
 	ts := testStruct{}
 
-	if err := db.Get(&ts); err == nil {
+	if _, err := db.Get(&ts); err == nil {
 		t.Error("This call should have failed")
 	}
 
-	if err := db.Get(&t1); err != nil {
+	if _, err := db.Get(&t1); err != nil {
 		t.Error(err)
 	}
 }
 
 func TestGetAll(t *testing.T) {
-	count := 200
+	count := 100000
+	start := time.Now()
 	db := createFreshTestDb(count, DefaultSchema)
+	t.Logf("Time to insert: %s", time.Since(start))
+
 	defer controlDB(t, db)
 
+	start = time.Now()
 	if s, err := db.All(&testStruct{}); err != nil {
 		t.Error(err)
 	} else {
+		t.Logf("Time to retrieve: %s", time.Since(start))
 		if len(s) != count {
 			t.Errorf("Expecting %d items, got %d", count, len(s))
 		}
 		if n, err := db.Count(&testStruct{}); n != count {
 			t.Errorf("Expecting %d items, got %d: %s", count, n, err)
-		}
-		for _, o := range s {
-			t.Log(*(o.(*testStruct)))
 		}
 	}
 }
@@ -179,12 +200,11 @@ func TestCorruptedFiles(t *testing.T) {
 		t.Error(err)
 	} else {
 		t.Log("Corrupting files")
-		for _, o := range s {
-			if path, err := db.oPath(o); err != nil {
-				t.Error(err)
-				t.FailNow()
-			} else {
-				corruptFile(path)
+		if schema, err := db.Schema(&testStruct{}); err != nil {
+			t.Error(err)
+		} else {
+			for _, o := range s {
+				corruptFile(db.oPath(schema, o))
 			}
 		}
 	}
@@ -677,4 +697,59 @@ func TestDeleteUniqueObject(t *testing.T) {
 		t.Errorf("Wrong number of objects in DB, expects %d != %d", size, n)
 	}
 
+}
+
+func stress(t *testing.T, db *DB, jobs int) {
+	wg := sync.WaitGroup{}
+	for i := 0; i < jobs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Second * time.Duration(rand.Int()%15))
+			if objs, err := db.Search(&testStruct{}, "A", "<", rand.Int()%42).Collect(); err != nil {
+				t.Error(err)
+			} else {
+				for _, o := range objs {
+					ts := o.(*testStruct)
+					ts.A = 4242
+					db.InsertOrUpdate(ts)
+					if rand.Int()%5 == 0 {
+						if err := db.Flush(ts); err != nil {
+							t.Error(err)
+						}
+					}
+				}
+			}
+
+		}()
+	}
+	wg.Wait()
+}
+
+func TestAsyncWrites(t *testing.T) {
+	size := 10000
+	s := DefaultSchema
+	s.AsyncWrites = &Async{Enable: true, Threshold: 1000, Timeout: 5}
+
+	db := createFreshTestDb(size, s)
+
+	controlDBSize(t, db, &testStruct{}, size)
+
+	db = closeAndReOpen(db)
+
+	controlDBSize(t, db, &testStruct{}, size)
+
+	search := db.Search(&testStruct{}, "A", "<", 10)
+	if err := search.Delete(); err != nil {
+		t.Error(err)
+	}
+	t.Logf("Deleted %d objects", search.Len())
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
+
+	db = closeAndReOpen(db)
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
+
+	stress(t, db, 10)
+	db = closeAndReOpen(db)
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
 }

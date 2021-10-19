@@ -27,11 +27,27 @@ func (it *Iterator) object() Object {
 	return reflect.New(it.t).Interface().(Object)
 }
 
+func (it *Iterator) next() (o Object, err error) {
+	if it.i < len(it.uuids) && it.i >= 0 {
+		o = it.object()
+		o.Initialize(it.uuids[it.i])
+		o, err = it.db.get(o)
+		if it.reverse {
+			it.i--
+		} else {
+			it.i++
+		}
+		return
+	}
+	err = ErrEOI
+	return
+}
+
 func (it *Iterator) Next() (o Object, err error) {
 	if it.i < len(it.uuids) && it.i >= 0 {
 		o = it.object()
 		o.Initialize(it.uuids[it.i])
-		err = it.db.Get(o)
+		o, err = it.db.Get(o)
 		if it.reverse {
 			it.i--
 		} else {

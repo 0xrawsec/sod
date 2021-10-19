@@ -1,8 +1,10 @@
 package sod
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,10 +18,63 @@ var (
 	DefaultSchema = Schema{Extension: ".json"}
 )
 
+type jsonAsync struct {
+	Enable    bool   `json:"enable"`
+	Threshold int    `json:"threshold"`
+	Timeout   string `json:"timeout"`
+}
+
+type Async struct {
+	routineStarted bool
+	Enable         bool
+	Threshold      int
+	Timeout        time.Duration
+}
+
+func (a *Async) MarshalJSON() ([]byte, error) {
+	t := jsonAsync{
+		a.Enable,
+		a.Threshold,
+		a.Timeout.String(),
+	}
+	return json.Marshal(&t)
+}
+
+func (a *Async) UnmarshalJSON(b []byte) (err error) {
+	t := jsonAsync{}
+	if err = json.Unmarshal(b, &t); err != nil {
+		return
+	}
+	// copying fields
+	a.Enable = t.Enable
+	a.Threshold = t.Threshold
+	if a.Timeout, err = time.ParseDuration(t.Timeout); err != nil {
+		return
+	}
+	return
+}
+
 type Schema struct {
 	object       Object
 	Extension    string `json:"extension"`
+	Cache        bool   `json:"cache"`
+	AsyncWrites  *Async `json:"async-writes,omitempty"`
 	ObjectsIndex *Index `json:"index"`
+}
+
+func (s *Schema) mustCache() bool {
+	return s.Cache || s.asyncWritesEnabled()
+}
+
+func (s *Schema) asyncWritesEnabled() bool {
+	if s.AsyncWrites != nil {
+		return s.AsyncWrites.Enable
+	}
+	return false
+}
+
+func (s *Schema) control() error {
+	return s.ObjectsIndex.Control()
 }
 
 func (s *Schema) Initialize(o Object) {
@@ -58,8 +113,4 @@ func (s *Schema) Index(o Object) error {
 
 func (s *Schema) Unindex(o Object) {
 	s.ObjectsIndex.Delete(o)
-}
-
-func (s *Schema) control() error {
-	return s.ObjectsIndex.Control()
 }
