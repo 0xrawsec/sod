@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// ToObjectSlice is a convenient function to pre-process arguments passed
+// to InsertOrUpdateMany function.
+func ToObjectSlice(slice interface{}) (objs []Object) {
+	v := reflect.ValueOf(slice)
+	if v.Kind() == reflect.Slice {
+		objs = make([]Object, 0, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			objs = append(objs, v.Index(i).Interface().(Object))
+		}
+	} else {
+		objs = make([]Object, 0)
+	}
+	return
+}
+
 func UnmarshalJsonFile(path string, i interface{}) (err error) {
 	var data []byte
 
