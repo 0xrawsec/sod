@@ -625,6 +625,9 @@ func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (err error) {
 	return
 }
 
+// InsertOrUpdateMany inserts several objects into the DB and
+// commit schema after all insertions. It is faster than calling
+// InsertOrUpdate for every objects separately.
 func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
@@ -691,7 +694,7 @@ func (db *DB) Commit(o Object) (err error) {
 	return db.commit(o)
 }
 
-// Flush a single object to disk
+// Flush a single object to disk. Flush does not commit schema
 func (db *DB) Flush(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
@@ -711,7 +714,8 @@ func (db *DB) Flush(o Object) (err error) {
 	return
 }
 
-// FlushAll objects of type to disk
+// FlushAll objects of type to disk. As Flush this function
+// does not commit schema to disk
 func (db *DB) FlushAll(of Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
@@ -737,6 +741,8 @@ func (db *DB) FlushAll(of Object) (err error) {
 	return
 }
 
+// Close closes gently the DB by flushing any pending async writes
+// and by committing all the schemas to disk
 func (db *DB) Close() (last error) {
 	db.Lock()
 	defer db.Unlock()
