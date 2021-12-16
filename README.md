@@ -1,4 +1,5 @@
-![build](https://github.com/0xrawsec/sod/actions/workflows/go.yml/badge.svg)
+[![GoDoc](https://pkg.go.dev/badge/github.com/0xrawsec/sod)](https://pkg.go.dev/github.com/0xrawsec/sod)
+![Build](https://github.com/0xrawsec/sod/actions/workflows/go.yml/badge.svg)
 ![coverage](https://raw.githubusercontent.com/0xrawsec/sod/master/.github/coverage/badge.svg)
 
 # Go Simple Object Database
