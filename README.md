@@ -1,6 +1,7 @@
+![Version](https://img.shields.io/github/v/tag/0xrawsec/sod?label=version)
 [![GoDoc](https://pkg.go.dev/badge/github.com/0xrawsec/sod)](https://pkg.go.dev/github.com/0xrawsec/sod)
 ![Build](https://github.com/0xrawsec/sod/actions/workflows/go.yml/badge.svg)
-![coverage](https://raw.githubusercontent.com/0xrawsec/sod/master/.github/coverage/badge.svg)
+![Coverage](https://raw.githubusercontent.com/0xrawsec/sod/master/.github/coverage/badge.svg)
 
 # Go Simple Object Database
 
