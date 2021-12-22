@@ -167,6 +167,8 @@ func (in *Index) Search(o Object, field string, operator string, value interface
 				return fi.SearchLess(value), nil
 			case "<=":
 				return fi.SearchLessOrEqual(value), nil
+			case "~=":
+				return fi.SearchByRegex(value), nil
 			default:
 				return nil, fmt.Errorf("%w %s", ErrUnkownSearchOperator, operator)
 			}

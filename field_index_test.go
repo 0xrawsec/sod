@@ -253,6 +253,42 @@ func TestIndexEvaluate(t *testing.T) {
 	}
 }
 
+func newIndexedFieldOrPanic(i interface{}) *IndexedField {
+	if f, err := NewIndexedField(i, rand.Uint64()); err != nil {
+		panic(err)
+	} else {
+		return f
+	}
+}
+
+func TestIndexEvaluateRegex(t *testing.T) {
+	var field *IndexedField
+	var rex *IndexedField
+
+	field = newIndexedFieldOrPanic("Test")
+	rex = newIndexedFieldOrPanic("Test")
+
+	if !field.Evaluate("~=", rex) {
+		t.Error("Should match")
+	}
+
+	if !field.Evaluate("~=", newIndexedFieldOrPanic("(?i:test)")) {
+		t.Error("Should match")
+	}
+
+	if !field.Evaluate("~=", newIndexedFieldOrPanic(".*")) {
+		t.Error("Should match")
+	}
+
+	if field.Evaluate("~=", newIndexedFieldOrPanic("test")) {
+		t.Error("Should not match")
+	}
+
+	if field.Evaluate("~=", newIndexedFieldOrPanic("testtest")) {
+		t.Error("Should not match")
+	}
+}
+
 func TestIndexDelete(t *testing.T) {
 	size := 10000
 	i := randomIndex(size)

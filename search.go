@@ -36,7 +36,7 @@ func (s *Search) And(field, operator string, value interface{}) *Search {
 	return s.db.search(s.object, field, operator, value, s.fields)
 }
 
-// And performs a new Search while "ORing" search results
+// Or performs a new Search while "ORing" search results
 func (s *Search) Or(field, operator string, value interface{}) *Search {
 	if s.Err() != nil {
 		return s

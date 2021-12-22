@@ -32,6 +32,7 @@ type testStruct struct {
 	L int8      `sod:"index"`
 	M time.Time `sod:"index"`
 	N uint
+	O string
 }
 
 type testStructUnique struct {
@@ -51,8 +52,10 @@ func genTestStructs(n int) chan Object {
 		defer close(co)
 		for i := 0; i < n; i++ {
 			c := "foo"
+			o := "bar"
 			if rand.Int()%2 == 0 {
 				c = "bar"
+				o = "foo"
 			}
 			ts := &testStruct{A: randMod(42),
 				B: randMod(42),
@@ -67,6 +70,7 @@ func genTestStructs(n int) chan Object {
 				L: int8(randMod(42)),
 				M: time.Now(),
 				N: uint(randMod(42)),
+				O: o,
 			}
 			co <- ts
 		}
@@ -386,7 +390,7 @@ func TestIndexAllTypes(t *testing.T) {
 	db = Open(dbpath)
 	defer db.Close()
 
-	if _, err := db.Search(&testStruct{}, "A", "<", 42).
+	if sr, err := db.Search(&testStruct{}, "A", "<", 42).
 		And("B", "<", 42).
 		And("C", "=", "bar").
 		And("D", "!=", 42).
@@ -400,8 +404,51 @@ func TestIndexAllTypes(t *testing.T) {
 		And("L", "<", 42).
 		And("M", "<", time.Now()).
 		And("N", "<", uint(42)).
+		And("O", "~=", "(?i:(FOO|BAR))").
 		Collect(); err != nil {
 		t.Error(err)
+	} else if len(sr) == 0 {
+		t.Error("Expecting some results")
+	}
+}
+
+func TestRegexSearch(t *testing.T) {
+	var err error
+	var eqOnC, rexOnO []Object
+
+	size := 1000
+	db := createFreshTestDb(size, DefaultSchema)
+	defer controlDB(t, db)
+	db.Close()
+
+	db = Open(dbpath)
+	defer db.Close()
+
+	if eqOnC, err = db.Search(&testStruct{}, "C", "=", "foo").
+		Collect(); err != nil {
+		t.Error(err)
+	}
+
+	if rexOnO, err = db.Search(&testStruct{}, "O", "~=", "(?i:BAR)").
+		Collect(); err != nil {
+		t.Error(err)
+	}
+
+	if eqOnO, err := db.Search(&testStruct{}, "O", "=", "bar").Collect(); err != nil {
+		t.Error(err)
+	} else if len(rexOnO) != len(eqOnO) {
+		t.Error("Both searches must have same number of elements")
+	}
+
+	if rexOnC, err := db.Search(&testStruct{}, "C", "~=", "(?i:Foo)").Collect(); err != nil {
+		t.Error(err)
+	} else if len(eqOnC) != len(rexOnC) {
+		t.Error("Both searches must have same number of elements")
+	}
+
+	// test set is created so that when C==foo -> O==bar
+	if len(eqOnC) != len(rexOnO) {
+		t.Error("Both searches must have same number of elements")
 	}
 }
 

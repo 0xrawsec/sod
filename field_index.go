@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"time"
 )
 
@@ -155,6 +156,21 @@ func (f *IndexedField) Evaluate(operator string, other *IndexedField) bool {
 		return f.Less(other)
 	case "<=":
 		return f.Less(other) || f.Equal(other)
+	case "~=":
+		var err error
+		var rex *regexp.Regexp
+
+		if sov, ok := other.Value.(string); ok {
+			if rex, err = regexp.Compile(sov); err != nil {
+				return false
+			}
+		}
+
+		if sv, ok := f.Value.(string); ok {
+			return rex.MatchString(sv)
+		}
+
+		return false
 	default:
 		panic(ErrUnkownSearchOperator)
 	}
@@ -372,6 +388,31 @@ func (in *fieldIndex) SearchLessOrEqual(value interface{}) []*IndexedField {
 		i--
 	}
 	return in.Index[i+1:]
+}
+
+func (in *fieldIndex) SearchByRegex(value interface{}) (out []*IndexedField) {
+	var rex *regexp.Regexp
+	var err error
+
+	out = make([]*IndexedField, 0)
+
+	if sval, ok := value.(string); ok {
+		if rex, err = regexp.Compile(sval); err != nil {
+			return
+		}
+	}
+
+	for _, f := range in.Index {
+		if sval, ok := f.Value.(string); ok {
+			if rex.MatchString(sval) {
+				out = append(out, f)
+			}
+		} else {
+			return
+		}
+	}
+
+	return
 }
 
 func (in *fieldIndex) insert(field *IndexedField) {
