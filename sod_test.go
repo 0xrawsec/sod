@@ -122,6 +122,22 @@ func controlDB(t *testing.T, db *DB) {
 	}
 }
 
+func assert(test bool, message string) {
+	if !test {
+		panic(message)
+	}
+}
+
+func TestSnakeCase(t *testing.T) {
+	assert(CamelToSnake("TestTest") == "test_test", "Unexpected snake case")
+	assert(CamelToSnake("TestTEST") == "test_test", "Unexpected snake case")
+	assert(CamelToSnake("OneTWOThree") == "one_two_three", "Unexpected snake case")
+	assert(CamelToSnake("One2Three") == "one_2_three", "Unexpected snake case")
+	assert(CamelToSnake("One23") == "one_23", "Unexpected snake case")
+	assert(CamelToSnake("1Step2Step") == "1_step_2_step", "Unexpected snake case")
+	assert(CamelToSnake("123") == "123", "Unexpected snake case")
+}
+
 func TestTypeof(t *testing.T) {
 	if typeof(&testStruct{}) != typeof(testStruct{}) {
 		t.Error("Unexpected typeof behaviour")
