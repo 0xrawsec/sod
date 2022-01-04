@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 )
@@ -163,7 +162,7 @@ func (db *DB) schema(of Object) (s *Schema, err error) {
 
 func (db *DB) itemname(o Object) string {
 	if LowercaseNames {
-		return strings.ToLower(stype(o))
+		return CamelToSnake(stype(o))
 	}
 	return stype(o)
 }
