@@ -28,6 +28,24 @@ func ToObjectSlice(slice interface{}) (objs []Object) {
 	return
 }
 
+// ToObjectChan is a convenient function to pre-process arguments passed
+// to InsertOrUpdateMany function.
+func ToObjectChan(slice interface{}) (objs chan Object) {
+	v := reflect.ValueOf(slice)
+	objs = make(chan Object)
+	if v.Kind() == reflect.Slice {
+		go func() {
+			defer close(objs)
+			for i := 0; i < v.Len(); i++ {
+				objs <- v.Index(i).Interface().(Object)
+			}
+		}()
+	} else {
+		close(objs)
+	}
+	return
+}
+
 func UnmarshalJsonFile(path string, i interface{}) (err error) {
 	var data []byte
 

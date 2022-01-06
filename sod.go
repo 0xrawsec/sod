@@ -610,18 +610,14 @@ func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (err error) {
 	for o = range in {
 		chunk = append(chunk, o)
 		if len(chunk) == csize {
-			if e := db.InsertOrUpdateMany(chunk...); e != nil {
-				err = e
+			if err = db.InsertOrUpdateMany(chunk...); err != nil {
+				return
 			}
 			chunk = make([]Object, 0, csize)
 		}
 	}
 
-	if e := db.InsertOrUpdateMany(chunk...); e == nil {
-		return e
-	}
-
-	return
+	return db.InsertOrUpdateMany(chunk...)
 }
 
 // InsertOrUpdateMany inserts several objects into the DB and
@@ -631,9 +627,17 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
+	// we validate all the objects prior to insertion
+	for _, o := range objects {
+		if err := o.Validate(); err != nil {
+			return ValidationErr(o, err)
+		}
+	}
+
 	for _, o := range objects {
 		if e := db.insertOrUpdate(o, false); e != nil {
 			err = e
+			break
 		}
 	}
 
@@ -653,6 +657,10 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 func (db *DB) InsertOrUpdate(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
+
+	if err := o.Validate(); err != nil {
+		return ValidationErr(o, err)
+	}
 
 	return db.insertOrUpdate(o, true)
 }

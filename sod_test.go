@@ -816,3 +816,40 @@ func TestAsyncWrites(t *testing.T) {
 	db = closeAndReOpen(db)
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
 }
+
+type invalidStruct struct {
+	Item
+	A int
+}
+
+func (s *invalidStruct) Validate() error {
+	if s.A == 42 {
+		return errors.New("A must not be 42")
+	}
+	return nil
+}
+
+func TestValidation(t *testing.T) {
+	db := Open(dbpath)
+
+	db.Create(&invalidStruct{}, DefaultSchema)
+
+	assert(db.InsertOrUpdate(&invalidStruct{A: 41}) == nil, "insertion should work")
+	assert(errors.Is(db.InsertOrUpdate(&invalidStruct{A: 42}), ErrInvalidObject), "insertion should fail")
+
+	structs := make([]*invalidStruct, 0)
+	for i := 0; i < 1000; i++ {
+		structs = append(structs, &invalidStruct{A: rand.Int() % 42})
+	}
+
+	assert(db.InsertOrUpdateMany(ToObjectSlice(structs)...) == nil, "insertion should work")
+	assert(db.InsertOrUpdateBulk(ToObjectChan(structs), 42) == nil, "insertion should work")
+
+	structs = make([]*invalidStruct, 0)
+	for i := 0; i < 1000; i++ {
+		structs = append(structs, &invalidStruct{A: rand.Int() % 43})
+	}
+	assert(errors.Is(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject), "insertion should fail")
+	assert(errors.Is(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject), "insertion should fail")
+
+}
