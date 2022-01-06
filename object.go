@@ -16,6 +16,7 @@ func ValidationErr(o Object, err error) error {
 type Object interface {
 	UUID() string
 	Initialize(string)
+	Transform()
 	Validate() error
 }
 
@@ -30,6 +31,8 @@ func (o *Item) Initialize(uuid string) {
 func (o *Item) UUID() string {
 	return o.uuid
 }
+
+func (o *Item) Transform() {}
 
 func (o *Item) Validate() error {
 	return nil

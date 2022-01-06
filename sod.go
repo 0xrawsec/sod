@@ -629,6 +629,8 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 
 	// we validate all the objects prior to insertion
 	for _, o := range objects {
+		// transform object prior to validation
+		o.Transform()
 		if err := o.Validate(); err != nil {
 			return ValidationErr(o, err)
 		}
@@ -658,6 +660,8 @@ func (db *DB) InsertOrUpdate(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
+	// transform object prior to validation
+	o.Transform()
 	if err := o.Validate(); err != nil {
 		return ValidationErr(o, err)
 	}
