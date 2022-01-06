@@ -12,7 +12,7 @@ It has features close to what an ORM framework can provide but has the advantage
  * everything is kept simple (one file per structure and eventually an index)
 It supports structure fields indexing to speed up searches on important fields.
 
-What you should use this project for:
+What should you use this project for:
  * you want to implement Go struct persistency in a simple way
  * you want to do DB like operations on those structures (Update, Delete, Search ...)
  * you don't want to deploy an ORM framework
