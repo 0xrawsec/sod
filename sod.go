@@ -131,7 +131,7 @@ func (db *DB) startAsyncWritesRoutine(s *Schema) {
 				for slept := time.Duration(0); ; slept += step {
 					n := db.safeCountPendingAsyncW(s.object)
 					if n >= s.AsyncWrites.Threshold || slept >= s.AsyncWrites.Timeout {
-						if err := db.FlushAll(s.object); err != nil {
+						if err := db.FlushAllAndCommit(s.object); err != nil {
 							panic(err)
 						}
 						break
@@ -323,6 +323,44 @@ func (db *DB) search(o Object, field, operator string, value interface{}, constr
 	} else {
 		return newSearch(db, o, f, err)
 	}
+}
+
+func (db *DB) flush(o Object) (err error) {
+	var s *Schema
+
+	if s, err = db.schema(o); err != nil {
+		return
+	}
+
+	if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+		err = e
+	}
+	// we delete object from the list of objects to save
+	db.asyncw.delete(o)
+
+	return
+}
+
+func (db *DB) flushAll(of Object) (err error) {
+	var s *Schema
+
+	if s, err = db.schema(of); err != nil {
+		return
+	}
+
+	key := db.asyncw.key(of)
+
+	if _, ok := db.asyncw.m[key]; ok {
+		for _, o := range db.asyncw.m[key] {
+			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+				err = e
+			}
+			// we delete object from the list of objects to save
+			db.asyncw.delete(o)
+		}
+	}
+
+	return
 }
 
 func (db *DB) flushDB() (err error) {
@@ -594,6 +632,7 @@ func (db *DB) DeleteObjects(from *Iterator) (err error) {
 func (db *DB) Delete(o Object) (lastErr error) {
 	db.Lock()
 	defer db.Unlock()
+
 	if err := db.delete(o); err != nil {
 		lastErr = err
 	}
@@ -721,17 +760,21 @@ func (db *DB) Flush(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
-	var s *Schema
+	return db.flush(o)
+}
 
-	if s, err = db.schema(o); err != nil {
-		return
+// Flush a single object to disk and commit changes
+func (db *DB) FlushAndCommit(o Object) (last error) {
+	db.Lock()
+	defer db.Unlock()
+
+	if err := db.commit(o); err != nil {
+		last = err
 	}
 
-	if e := db.writeObject(o, db.oPath(s, o)); e != nil {
-		err = e
+	if err := db.flush(o); err != nil {
+		last = err
 	}
-	// we delete object from the list of objects to save
-	db.asyncw.delete(o)
 
 	return
 }
@@ -742,22 +785,20 @@ func (db *DB) FlushAll(of Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
-	var s *Schema
+	return db.flushAll(of)
+}
 
-	if s, err = db.schema(of); err != nil {
-		return
+// FlushAllAndCommit flushes objects of type to disk and commit schema
+func (db *DB) FlushAllAndCommit(of Object) (last error) {
+	db.Lock()
+	defer db.Unlock()
+
+	if err := db.flushAll(of); err != nil {
+		last = err
 	}
 
-	key := db.asyncw.key(of)
-
-	if _, ok := db.asyncw.m[key]; ok {
-		for _, o := range db.asyncw.m[key] {
-			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
-				err = e
-			}
-			// we delete object from the list of objects to save
-			db.asyncw.delete(o)
-		}
+	if err := db.commit(of); err != nil {
+		last = err
 	}
 
 	return
