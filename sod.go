@@ -389,7 +389,7 @@ func (db *DB) Create(o Object, s Schema) (err error) {
 	if es, err = db.schema(o); err == nil {
 		// update existing schema with changes
 		es.update(&s)
-		return
+		return db.saveSchema(o, es, true)
 	}
 
 	// we need to create a new schema
@@ -417,6 +417,14 @@ func (db *DB) Get(in Object) (out Object, err error) {
 	db.RLock()
 	defer db.RUnlock()
 
+	return db.get(in)
+}
+
+// GetByUUID gets a single Object from the DB its UUID
+func (db *DB) GetByUUID(in Object, uuid string) (out Object, err error) {
+	db.RLock()
+	defer db.RUnlock()
+	in.Initialize(uuid)
 	return db.get(in)
 }
 

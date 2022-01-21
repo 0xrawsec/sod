@@ -167,6 +167,12 @@ func TestSimpleDb(t *testing.T) {
 	if _, err := db.Get(&t1); err != nil {
 		t.Error(err)
 	}
+
+	if o, err := db.GetByUUID(&testStruct{}, t1.UUID()); err != nil {
+		t.Error(err)
+	} else {
+		t.Log(o)
+	}
 }
 
 func TestGetAll(t *testing.T) {
