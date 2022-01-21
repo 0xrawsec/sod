@@ -107,10 +107,22 @@ func (s *Schema) Initialize(o Object) {
 	}
 }
 
+// Asynchrone makes the data described by this schema managed asynchronously
+// Objects will be written either if more than threshold events are modified
+// or at every timeout
+func (s *Schema) Asynchrone(threshold int, timeout time.Duration) {
+	s.AsyncWrites = &Async{
+		Enable:    true,
+		Threshold: threshold,
+		Timeout:   timeout}
+}
+
+// Index indexes an Object
 func (s *Schema) Index(o Object) error {
 	return s.ObjectsIndex.InsertOrUpdate(o)
 }
 
+// Index un-indexes an Object
 func (s *Schema) Unindex(o Object) {
 	s.ObjectsIndex.Delete(o)
 }

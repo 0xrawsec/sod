@@ -2,11 +2,14 @@ package sod
 
 import (
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 )
 
 var (
-	ErrNoObjectFound = errors.New("no object found")
+	ErrUnknownOperator = errors.New("unknown logical operator")
+	ErrNoObjectFound   = errors.New("no object found")
 )
 
 func IsNoObjectFound(err error) bool {
@@ -26,6 +29,21 @@ type Search struct {
 
 func newSearch(db *DB, o Object, f []*IndexedField, err error) *Search {
 	return &Search{db: db, object: o, fields: f, limit: math.MaxUint, err: err}
+}
+
+// Operation performs a new Search while ANDing or ORing the results
+// operator must be in ["and", "&&", "or", "||"]
+func (s *Search) Operation(operator, field, comparator string, value interface{}) *Search {
+	op := strings.ToLower(operator)
+	switch op {
+	case "and", "&&":
+		return s.And(field, comparator, value)
+	case "or", "||":
+		return s.Or(field, comparator, value)
+	default:
+		s.err = fmt.Errorf("%w %s", ErrUnknownOperator, op)
+	}
+	return s
 }
 
 // And performs a new Search while "ANDing" search results

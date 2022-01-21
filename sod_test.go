@@ -418,9 +418,9 @@ func TestIndexAllTypes(t *testing.T) {
 		And("J", "<", uint(42)).
 		And("K", "<", float32(42)).
 		And("L", "<", 42).
-		And("M", "<", time.Now()).
-		And("N", "<", uint(42)).
-		And("O", "~=", "(?i:(FOO|BAR))").
+		Operation("AND", "M", "<", time.Now()).
+		Operation("&&", "N", "<", uint(42)).
+		Operation("and", "O", "~=", "(?i:(FOO|BAR))").
 		Collect(); err != nil {
 		t.Error(err)
 	} else if len(sr) == 0 {
@@ -541,7 +541,7 @@ func TestSearchError(t *testing.T) {
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
 
-	if s := db.Search(&testStruct{}, "A", "<>", 42).And("B", "=", 42).Or("C", "=", "bar"); !errors.Is(s.Err(), ErrUnkownSearchOperator) {
+	if s := db.Search(&testStruct{}, "A", "<>", 42).And("B", "=", 42).Operation("or", "C", "=", "bar"); !errors.Is(s.Err(), ErrUnkownSearchOperator) {
 		t.Error("Should have raised error")
 	}
 }
@@ -792,7 +792,8 @@ func stress(t *testing.T, db *DB, jobs int) {
 func TestAsyncWrites(t *testing.T) {
 	size := 10000
 	s := DefaultSchema
-	s.AsyncWrites = &Async{Enable: true, Threshold: 1000, Timeout: 5}
+	//s.AsyncWrites = &Async{Enable: true, Threshold: 1000, Timeout: 5}
+	s.Asynchrone(1000, 5)
 
 	db := createFreshTestDb(size, s)
 
