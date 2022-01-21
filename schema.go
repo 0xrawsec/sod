@@ -62,6 +62,12 @@ type Schema struct {
 	ObjectsIndex *Index `json:"index"`
 }
 
+func (s *Schema) update(from *Schema) {
+	s.Extension = from.Extension
+	s.Cache = from.Cache
+	s.AsyncWrites = from.AsyncWrites
+}
+
 func (s *Schema) mustCache() bool {
 	return s.Cache || s.asyncWritesEnabled()
 }
