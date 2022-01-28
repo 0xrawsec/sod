@@ -798,7 +798,6 @@ func stress(t *testing.T, db *DB, jobs int) {
 func TestAsyncWrites(t *testing.T) {
 	size := 10000
 	s := DefaultSchema
-	//s.AsyncWrites = &Async{Enable: true, Threshold: 1000, Timeout: 5}
 	s.Asynchrone(1000, 5)
 
 	db := createFreshTestDb(size, s)
@@ -806,6 +805,32 @@ func TestAsyncWrites(t *testing.T) {
 	controlDBSize(t, db, &testStruct{}, size)
 
 	db = closeAndReOpen(db)
+
+	controlDBSize(t, db, &testStruct{}, size)
+
+	search := db.Search(&testStruct{}, "A", "<", 10)
+	if err := search.Delete(); err != nil {
+		t.Error(err)
+	}
+	t.Logf("Deleted %d objects", search.Len())
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
+
+	db = closeAndReOpen(db)
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
+
+	stress(t, db, 10)
+	db = closeAndReOpen(db)
+	controlDBSize(t, db, &testStruct{}, size-search.Len())
+}
+
+func TestAsyncWritesFastDelete(t *testing.T) {
+	// there is a bug when a file is deleted while it has not
+	// been written yet to disk. This test checks for that bug
+	size := 10
+	s := DefaultSchema
+	s.Asynchrone(1000, 50)
+
+	db := createFreshTestDb(size, s)
 
 	controlDBSize(t, db, &testStruct{}, size)
 

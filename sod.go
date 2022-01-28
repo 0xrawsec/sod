@@ -301,8 +301,10 @@ func (db *DB) delete(o Object) (err error) {
 	// unindexing object
 	s.Unindex(o)
 	path = filepath.Join(db.oDir(o), filename(o, s))
-
-	return os.Remove(path)
+	if isFileAndExist(path) {
+		return os.Remove(path)
+	}
+	return
 }
 
 func (db *DB) search(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
