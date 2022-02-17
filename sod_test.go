@@ -661,6 +661,15 @@ func TestUniqueObject(t *testing.T) {
 		t.Error("Must have raised uniqueness error")
 	}
 
+	ts := &testStructUnique{}
+	if err := db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&ts); err != nil {
+		t.Error(err)
+	} else {
+		if ts.A != 42 || ts.B != 43 || ts.C != "foo" {
+			t.Error("Failed to assign object")
+		}
+	}
+
 	if o, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); err != nil {
 		t.Error(err)
 	} else {

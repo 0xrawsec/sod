@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 )
 
@@ -135,6 +136,29 @@ func (s *Search) One() (o Object, err error) {
 	}
 	err = ErrNoObjectFound
 	return
+}
+
+// AssignOne returns the first result found calling Collect function
+// and assign the Object found to target. Target must be a *sod.Object
+// otherwise the function panics. If no Object is found, ErrNoObjectFound
+// is returned
+func (s *Search) AssignOne(target interface{}) (err error) {
+	var o Object
+
+	if o, err = s.One(); err != nil {
+		return err
+	} else {
+		v := reflect.ValueOf(target)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+			if _, ok := v.Interface().(Object); ok {
+				ov := reflect.ValueOf(o)
+				v.Set(ov)
+				return
+			}
+		}
+		panic("target must be a *sod.Object")
+	}
 }
 
 // Collect all the objects resulting from the search.
