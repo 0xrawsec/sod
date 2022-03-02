@@ -149,7 +149,7 @@ func (s *Search) AssignOne(target interface{}) (err error) {
 		return err
 	} else {
 		v := reflect.ValueOf(target)
-		if v.Kind() == reflect.Ptr {
+		if v.Kind() == reflect.Ptr && !v.IsZero() {
 			v = v.Elem()
 			if _, ok := v.Interface().(Object); ok {
 				ov := reflect.ValueOf(o)

@@ -612,6 +612,8 @@ func TestDBBulkDeletion(t *testing.T) {
 }
 
 func TestUniqueObject(t *testing.T) {
+	var uninit *testStructUnique
+
 	cleanup()
 
 	db := Open(dbpath)
@@ -662,6 +664,8 @@ func TestUniqueObject(t *testing.T) {
 	}
 
 	ts := &testStructUnique{}
+	shouldPanic(t, func() { db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(uninit) })
+
 	if err := db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&ts); err != nil {
 		t.Error(err)
 	} else {
@@ -892,5 +896,4 @@ func TestValidation(t *testing.T) {
 	}
 	assert(errors.Is(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject), "insertion should fail")
 	assert(errors.Is(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject), "insertion should fail")
-
 }

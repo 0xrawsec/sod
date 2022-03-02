@@ -78,7 +78,7 @@ github.com/0xrawsec/sod/search.go:103:		Delete			75.0%
 github.com/0xrawsec/sod/search.go:114:		Reverse			100.0%
 github.com/0xrawsec/sod/search.go:120:		Limit			100.0%
 github.com/0xrawsec/sod/search.go:127:		One			87.5%
-github.com/0xrawsec/sod/search.go:145:		AssignOne		81.8%
+github.com/0xrawsec/sod/search.go:145:		AssignOne		90.9%
 github.com/0xrawsec/sod/search.go:170:		Collect			88.2%
 github.com/0xrawsec/sod/search.go:204:		Err			100.0%
 github.com/0xrawsec/sod/sod.go:28:		newObjectStore		100.0%
@@ -145,4 +145,4 @@ github.com/0xrawsec/sod/utils.go:126:		filename		100.0%
 github.com/0xrawsec/sod/utils.go:130:		uuidExt			0.0%
 github.com/0xrawsec/sod/utils.go:137:		isFileAndExist		100.0%
 github.com/0xrawsec/sod/utils.go:145:		dbgLock			0.0%
-total:						(statements)		87.2%
+total:						(statements)		87.4%
