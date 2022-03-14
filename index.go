@@ -12,6 +12,7 @@ var (
 	ErrFieldNotIndexed      = errors.New("field not indexed")
 	ErrFieldUnique          = errors.New("unique constraint on field")
 	ErrUnkownSearchOperator = errors.New("unknown search operator")
+	ErrCasting              = errors.New("casting error")
 )
 
 func IsUnique(err error) bool {
@@ -34,13 +35,35 @@ type Index struct {
 	ObjectIds map[uint64]string
 }
 
-func fieldByName(o Object, field string) (i interface{}, ok bool) {
-	v := reflect.ValueOf(o)
+func valueFieldByName(v reflect.Value, fields []string) (out reflect.Value, ok bool) {
+
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	v = v.FieldByName(field)
-	return v.Interface(), v.IsValid()
+
+	out = v.FieldByName(fields[0])
+
+	// if pointer we dereference
+	if out.Kind() == reflect.Ptr {
+		out = out.Elem()
+	}
+
+	if out.Kind() == reflect.Struct && len(fields) > 1 {
+		return valueFieldByName(out, fields[1:])
+	}
+
+	return out, out.IsValid()
+}
+
+func fieldByName(o Object, fpath []string) (i interface{}, ok bool) {
+	v := reflect.ValueOf(o)
+
+	v, ok = valueFieldByName(v, fpath)
+	if !ok {
+		return nil, ok
+	}
+
+	return v.Interface(), ok
 }
 
 func NewIndex(fields ...FieldDescriptor) *Index {
@@ -51,7 +74,7 @@ func NewIndex(fields ...FieldDescriptor) *Index {
 
 	for _, fd := range fields {
 		if fd.Index || fd.Constraint.Unique {
-			i.Fields[fd.Name] = NewFieldIndex(fd)
+			i.Fields[fd.Path] = NewFieldIndex(fd)
 		}
 	}
 
@@ -88,14 +111,20 @@ func (in *Index) UnmarshalJSON(data []byte) error {
 
 func (in *Index) SatisfyAll(o Object) (err error) {
 	for fn, fi := range in.Fields {
-		if v, ok := fieldByName(o, fn); ok {
+		if v, ok := fieldByName(o, fi.nameSplit); ok {
+			var iField *IndexedField
+
+			if iField, err = searchField(v); err != nil {
+				return
+			}
+
 			// check constraint on value
 			objid, exists := in.uuids[o.UUID()]
-			if err = fi.Satisfy(objid, exists, v); err != nil {
+			if err = fi.Satisfy(objid, exists, iField); err != nil {
 				return fmt.Errorf("%s does not satisfy constraint: %w", fn, err)
 			}
 		} else {
-			return fmt.Errorf("%w %s", ErrUnkownField, fn)
+			return fmt.Errorf("cannot satisfy constraint %w %s", ErrUnkownField, fn)
 		}
 	}
 	return
@@ -111,7 +140,7 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 	// the object is already known, we update
 	if i, ok := in.uuids[o.UUID()]; ok {
 		for fn, fi := range in.Fields {
-			if v, ok := fieldByName(o, fn); ok {
+			if v, ok := fieldByName(o, fi.nameSplit); ok {
 				if err = fi.Update(v, i); err != nil {
 					return
 				}
@@ -121,7 +150,7 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 		}
 	} else {
 		for fn, fi := range in.Fields {
-			if v, ok := fieldByName(o, fn); ok {
+			if v, ok := fieldByName(o, fi.nameSplit); ok {
 				if err = fi.Insert(v, in.i); err != nil {
 					return
 				}
@@ -148,34 +177,46 @@ func (in *Index) Delete(o Object) {
 }
 
 func (in *Index) Search(o Object, field string, operator string, value interface{}, constrain []*IndexedField) ([]*IndexedField, error) {
-	if _, ok := fieldByName(o, field); ok {
+	var iField *IndexedField
+	var err error
+
+	if _, ok := fieldByName(o, fieldPath(field)); ok {
+
+		if iField, err = searchField(value); err != nil {
+			return nil, err
+		}
+
 		// if field is indexed
 		if fi, ok := in.Fields[field]; ok {
+			if fi.Cast != iField.ValueTypeString() {
+				return nil, fmt.Errorf("%w, cannot cast %T(%v) to %s", ErrCasting, value, value, fi.Cast)
+			}
+
 			if constrain != nil {
 				fi = fi.Constrain(constrain)
 			}
+
 			switch operator {
 			case "!=":
-				return fi.SearchNotEqual(value), nil
+				return fi.SearchNotEqual(iField), nil
 			case "=":
-				return fi.SearchEqual(value), nil
+				return fi.SearchEqual(iField), nil
 			case ">":
-				return fi.SearchGreater(value), nil
+				return fi.SearchGreater(iField), nil
 			case ">=":
-				return fi.SearchGreaterOrEqual(value), nil
+				return fi.SearchGreaterOrEqual(iField), nil
 			case "<":
-				return fi.SearchLess(value), nil
+				return fi.SearchLess(iField), nil
 			case "<=":
-				return fi.SearchLessOrEqual(value), nil
+				return fi.SearchLessOrEqual(iField), nil
 			case "~=":
-				return fi.SearchByRegex(value), nil
+				return fi.SearchByRegex(iField)
 			default:
 				return nil, fmt.Errorf("%w %s", ErrUnkownSearchOperator, operator)
 			}
 		}
 		return nil, fmt.Errorf("%w %s", ErrFieldNotIndexed, field)
 	} else {
-
 		return nil, fmt.Errorf("%w %s for object %T", ErrUnkownField, field, o)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -21,19 +22,13 @@ type IndexedField struct {
 	ObjectId uint64
 }
 
-func searchField(value interface{}) (k *IndexedField) {
-	var err error
-	if k, err = NewIndexedField(value, 0); err != nil {
-		panic(err)
-	}
-	return
+func searchField(value interface{}) (k *IndexedField, err error) {
+	return NewIndexedField(value, 0)
 }
 
 func NewIndexedField(value interface{}, objid uint64) (*IndexedField, error) {
 	var err error
 
-	// we cast everything to float64 because json unmarshal interface{}
-	// to float64 and that is a current limitation of the indexing
 	switch k := value.(type) {
 	case uint8:
 		value = uint64(k)
@@ -64,7 +59,8 @@ func NewIndexedField(value interface{}, objid uint64) (*IndexedField, error) {
 }
 
 func (f *IndexedField) ValueTypeFromString(t string) {
-
+	// we cast everything to float64 because json unmarshal interface{}
+	// to float64 and that is a current limitation of the indexing
 	switch t {
 	case "float64":
 		f.Value = f.Value.(float64)
@@ -113,14 +109,25 @@ func (f *IndexedField) String() string {
 }
 
 func (f *IndexedField) Equal(other *IndexedField) bool {
-	return reflect.DeepEqual(f.Value, other.Value)
+	switch kt := f.Value.(type) {
+	case int64:
+		return kt == other.Value.(int64)
+	case uint64:
+		return kt == other.Value.(uint64)
+	case float64:
+		return kt == other.Value.(float64)
+	case string:
+		return kt == other.Value.(string)
+	default:
+		panic(fmt.Errorf("%w %T", ErrUnknownKeyType, f.Value))
+	}
 }
 
 func (f *IndexedField) DeepEqual(other *IndexedField) bool {
 	if f.ObjectId != other.ObjectId {
 		return false
 	}
-	return reflect.DeepEqual(f.Value, other.Value)
+	return f.Equal(other)
 }
 
 func (f *IndexedField) Greater(other *IndexedField) bool {
@@ -181,14 +188,73 @@ type Constraints struct {
 }
 
 type FieldDescriptor struct {
-	Name       string      `json:"-"`
+	Path       string      `json:"-"`
 	Index      bool        `json:"-"`
 	Constraint Constraints `json:"constraint"`
+}
+
+func fieldDescriptors(o Object) (fds []FieldDescriptor) {
+	fds = make([]FieldDescriptor, 0)
+	recFieldDescriptors(reflect.ValueOf(o), "", &fds)
+	return
+}
+
+func recFieldDescriptors(v reflect.Value, path string, fds *[]FieldDescriptor) {
+	typ := v.Type()
+
+	if v.Kind() == reflect.Ptr {
+		recFieldDescriptors(v.Elem(), path, fds)
+		return
+	}
+
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		fieldType := typ.Field(i)
+
+		if field.Kind() == reflect.Ptr {
+			// create a new field
+			field = reflect.New(fieldType.Type.Elem()).Elem()
+			nextPath := fieldType.Name
+			if path != "" {
+				nextPath = strings.Join([]string{path, fieldType.Name}, ".")
+			}
+			recFieldDescriptors(field, nextPath, fds)
+			continue
+		}
+
+		if field.Kind() == reflect.Struct {
+			nextPath := fieldType.Name
+			if path != "" {
+				nextPath = strings.Join([]string{path, fieldType.Name}, ".")
+			}
+			recFieldDescriptors(field, nextPath, fds)
+			continue
+		}
+
+		if tag, ok := fieldType.Tag.Lookup("sod"); ok {
+			fdPath := fieldType.Name
+			if path != "" {
+				fdPath = fmt.Sprintf("%s.%s", path, fdPath)
+			}
+			fd := FieldDescriptor{Path: fdPath}
+			for _, tv := range strings.Split(tag, ",") {
+				switch tv {
+				case "index":
+					fd.Index = true
+				case "unique":
+					fd.Index = true
+					fd.Constraint.Unique = true
+				}
+			}
+			*fds = append(*fds, fd)
+		}
+	}
 }
 
 // fieldIndex structure
 // by convention the smallest value is at the end
 type fieldIndex struct {
+	Name string `json:"name"`
 	// Cast is used to store type casting for the field value.
 	// Because of JSON serialization the original type is lost as
 	// IndexedField.Value is an interface{}
@@ -196,10 +262,12 @@ type fieldIndex struct {
 	Constraints Constraints     `json:"constraints"`
 	Index       []*IndexedField `json:"index"`
 	objectIds   map[uint64]*IndexedField
+	nameSplit   []string
 }
 
 func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	type tmp struct {
+		Name        string          `json:"name"`
 		Cast        string          `json:"cast"`
 		Constraints Constraints     `json:"constraints"`
 		Index       []*IndexedField `json:"index"`
@@ -209,9 +277,12 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	i.Name = t.Name
 	i.Cast = t.Cast
 	i.Constraints = t.Constraints
 	i.Index = t.Index
+	i.nameSplit = fieldPath(i.Name)
+
 	for _, f := range i.Index {
 		f.ValueTypeFromString(i.Cast)
 	}
@@ -234,9 +305,11 @@ func NewFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 		c = opts[1]
 	}
 	return &fieldIndex{
+		Name:        desc.Path,
 		Index:       make([]*IndexedField, l, c),
 		Constraints: desc.Constraint,
-		objectIds:   make(map[uint64]*IndexedField)}
+		objectIds:   make(map[uint64]*IndexedField),
+		nameSplit:   fieldPath(desc.Path)}
 }
 
 func (in *fieldIndex) Initialize(k *IndexedField) {
@@ -292,11 +365,15 @@ func (in *fieldIndex) rangeEqual(k *IndexedField) (i, j int) {
 }
 
 // Satisfy checks whether the value satisfies the constraints fixed by index
-func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue interface{}) (err error) {
+func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue *IndexedField) (err error) {
+
 	constraint := in.Constraints
+
 	// handling uniqueness
 	if constraint.Unique {
+
 		equals := in.SearchEqual(fvalue)
+
 		if len(equals) > 1 {
 			return ErrFieldUnique
 		} else if len(equals) == 1 {
@@ -309,56 +386,62 @@ func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue interface{}) (err
 	return
 }
 
-func (in *fieldIndex) Has(value interface{}) bool {
+func (in *fieldIndex) Has(value *IndexedField) bool {
 	return len(in.SearchEqual(value)) > 0
 }
 
-func (in *fieldIndex) SearchEqual(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i, j := in.rangeEqual(k)
+func (in *fieldIndex) SearchEqual(value *IndexedField) []*IndexedField {
+
+	i, j := in.rangeEqual(value)
+
 	if i == j {
 		if in.Len() > 0 {
 			return []*IndexedField{in.Index[i]}
 		}
 	}
+
 	return in.Index[i : j+1]
 }
 
-func (in *fieldIndex) SearchNotEqual(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i, j := in.rangeEqual(k)
-	c := make([]*IndexedField, len(in.Index[0:i]))
-	copy(c, in.Index[0:i])
-	c = append(c, in.Index[j+1:]...)
-	return c
+func (in *fieldIndex) SearchNotEqual(value *IndexedField) (f []*IndexedField) {
+
+	i, j := in.rangeEqual(value)
+	f = make([]*IndexedField, len(in.Index[0:i]))
+	copy(f, in.Index[0:i])
+	f = append(f, in.Index[j+1:]...)
+
+	return
 }
 
-func (in *fieldIndex) SearchGreaterOrEqual(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i := in.InsertionIndex(k)
+func (in *fieldIndex) SearchGreaterOrEqual(value *IndexedField) []*IndexedField {
+
+	i := in.InsertionIndex(value)
+
 	// the only case when it is (logicaly) possible is when index is empty
 	if i == 0 {
 		return []*IndexedField{}
 	}
+
 	return in.Index[:i]
 }
 
-func (in *fieldIndex) SearchGreater(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i := in.InsertionIndex(k)
+func (in *fieldIndex) SearchGreater(value *IndexedField) (f []*IndexedField) {
+
+	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
 		i--
 	}
+
 	// we need to go backward until one element is greater
 	for i >= 0 {
-		if in.Index[i].Greater(k) {
+		if in.Index[i].Greater(value) {
 			break
 		}
 		i--
 	}
 
 	if i == 0 {
-		if in.Len() > 0 && in.Index[0].Greater(k) {
+		if in.Len() > 0 && in.Index[0].Greater(value) {
 			return []*IndexedField{in.Index[0]}
 		}
 	}
@@ -366,37 +449,39 @@ func (in *fieldIndex) SearchGreater(value interface{}) []*IndexedField {
 	return in.Index[:i+1]
 }
 
-func (in *fieldIndex) SearchLess(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i := in.InsertionIndex(k)
+func (in *fieldIndex) SearchLess(value *IndexedField) []*IndexedField {
+
+	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
 		return []*IndexedField{}
 	}
+
 	return in.Index[i:]
 }
 
-func (in *fieldIndex) SearchLessOrEqual(value interface{}) []*IndexedField {
-	k := searchField(value)
-	i := in.InsertionIndex(k)
+func (in *fieldIndex) SearchLessOrEqual(value *IndexedField) []*IndexedField {
+
+	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
 		i--
 	}
+
 	for i >= 0 {
-		if in.Index[i].Greater(k) {
+		if in.Index[i].Greater(value) {
 			break
 		}
 		i--
 	}
+
 	return in.Index[i+1:]
 }
 
-func (in *fieldIndex) SearchByRegex(value interface{}) (out []*IndexedField) {
+func (in *fieldIndex) SearchByRegex(value *IndexedField) (out []*IndexedField, err error) {
 	var rex *regexp.Regexp
-	var err error
 
 	out = make([]*IndexedField, 0)
 
-	if sval, ok := value.(string); ok {
+	if sval, ok := value.Value.(string); ok {
 		if rex, err = regexp.Compile(sval); err != nil {
 			return
 		}

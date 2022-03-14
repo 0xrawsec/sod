@@ -5,10 +5,37 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/0xrawsec/toast"
 )
+
+type inner struct {
+	D    float64
+	E    int
+	F    string `sod:"index"`
+	Anon struct {
+		G string `sod:"index"`
+	}
+}
+
+type nestedStruct struct {
+	Item
+	A  int
+	B  uint64
+	C  float32 `sod:"index"`
+	In inner
+}
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
+}
+
+func searchFieldOrPanic(value interface{}) *IndexedField {
+	if sf, err := searchField(value); err != nil {
+		panic(err)
+	} else {
+		return sf
+	}
 }
 
 func randomIndex(size int) *fieldIndex {
@@ -39,7 +66,7 @@ func TestFieldByName(t *testing.T) {
 	b := B{}
 	b.A = A{42}
 
-	if i, ok := fieldByName(&b, "Aa"); !ok {
+	if i, ok := fieldByName(&b, fieldPath("Aa")); !ok {
 		t.Errorf("Must have found field")
 	} else if i.(int) != 42 {
 		t.Errorf("Unexpected interface value")
@@ -110,13 +137,15 @@ func TestIndexSearchGreaterOrEqual(t *testing.T) {
 	size := 1000
 	i := randomIndex(size)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		k := rand.Int() % i.Len()
 		if k%2 == 0 {
 			k = 0
 		}
 		sk := i.Index[k]
-		s := i.SearchGreaterOrEqual(sk.Value)
+		s := i.SearchGreaterOrEqual(sk)
 		if len(s) == 0 {
 			t.Error("search result must not be empty")
 		}
@@ -128,22 +157,22 @@ func TestIndexSearchGreaterOrEqual(t *testing.T) {
 	}
 
 	i = randomIndex(0)
-	if len(i.SearchGreaterOrEqual(42)) != 0 {
-		t.Error("search result must be empty")
-	}
+	s := i.SearchGreaterOrEqual(searchFieldOrPanic(42))
+	tt.Assert(len(s) == 0)
+
 }
 
 func TestIndexSearchGreater(t *testing.T) {
 	size := 1000
 	i := randomIndex(size)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		sk := i.Index[rand.Int()%i.Len()]
-		s := i.SearchGreater(sk.Value)
+		s := i.SearchGreater(sk)
 		for _, k := range s {
-			if k.Less(sk) || k.Equal(sk) {
-				t.Errorf("%s not greater than %s", k, sk)
-			}
+			tt.Assert(k.Greater(sk))
 		}
 	}
 }
@@ -152,13 +181,13 @@ func TestIndexSearchLess(t *testing.T) {
 	size := 1000
 	i := randomIndex(size)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		sk := i.Index[rand.Int()%i.Len()]
-		s := i.SearchLess(sk.Value)
+		s := i.SearchLess(sk)
 		for _, k := range s {
-			if k.Greater(sk) || k.Equal(sk) {
-				t.Errorf("%s not less than %s", k, sk)
-			}
+			tt.Assert(k.Less(sk))
 		}
 	}
 }
@@ -166,16 +195,14 @@ func TestIndexSearchLessOrEqual(t *testing.T) {
 	size := 1000
 	i := randomIndex(size)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		sk := i.Index[rand.Int()%i.Len()]
-		s := i.SearchLessOrEqual(sk.Value)
-		if len(s) == 0 {
-			t.Error("search result must not be empty")
-		}
+		s := i.SearchLessOrEqual(sk)
+		tt.Assert(len(s) != 0)
 		for _, k := range s {
-			if k.Greater(sk) {
-				t.Errorf("%s not less than or equal to %s", k, sk)
-			}
+			tt.Assert(!k.Greater(sk))
 		}
 	}
 }
@@ -184,16 +211,18 @@ func TestIndexSearchEqual(t *testing.T) {
 	size := 10000
 	i := randomIndex(size)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		sk := i.Index[rand.Int()%i.Len()]
-		s := i.SearchEqual(sk.Value)
+		s := i.SearchEqual(sk)
+
 		if len(s) == 0 {
 			t.Error("search result must not be empty")
 		}
+
 		for _, k := range s {
-			if !k.Equal(sk) {
-				t.Errorf("%s not equal to %s", k, sk)
-			}
+			tt.Assert(k.Equal(sk))
 		}
 	}
 }
@@ -201,18 +230,18 @@ func TestIndexSearchEqual(t *testing.T) {
 func TestIndexSearchNotEqual(t *testing.T) {
 	size := 1000
 	i := randomIndex(size)
+
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		j := rand.Intn(len(i.Index))
 		sk := i.Index[j]
-		s := i.SearchNotEqual(sk.Value)
+		s := i.SearchNotEqual(sk)
 
-		if len(s) == 0 {
-			t.Error("search result must not be empty")
-		}
+		tt.Assert(len(s) > 0)
+
 		for _, k := range s {
-			if k.Equal(sk) {
-				t.Errorf("%s  equal to %s", k, sk)
-			}
+			tt.Assert(!k.Equal(sk))
 		}
 	}
 }
@@ -222,14 +251,18 @@ func TestIndexConstrain(t *testing.T) {
 	i := randomIndex(size)
 	o := randomIndex(1000)
 
+	tt := toast.FromT(t)
+
 	for j := 0; j < size*2; j++ {
 		sk := i.Index[rand.Int()%i.Len()]
-		s := i.SearchLess(sk.Value)
+		s := i.SearchLess(sk)
 		inter := o.Constrain(s)
-
-		if inter.Len() != len(s) || inter.Len() > i.Len() {
-			t.Errorf("bad intersection length")
-		}
+		tt.Assert(inter.Len() == len(s))
+		tt.Assert(inter.Len() <= i.Len())
+		/*
+			if inter.Len() != len(s) || inter.Len() > i.Len() {
+				t.Errorf("bad intersection length")
+			}*/
 	}
 	t.Log(i.Slice())
 	t.Log(i)
@@ -316,4 +349,13 @@ func TestIndexUpdate(t *testing.T) {
 	if i.Len() != size {
 		t.Error("Wrong size after update")
 	}
+}
+
+func TestBuildFieldDescriptors(t *testing.T) {
+
+	//tt := toast.FromT(t)
+
+	t.Log(fieldDescriptors(&testStruct{}))
+	t.Log(fieldDescriptors(&nestedStruct{}))
+
 }

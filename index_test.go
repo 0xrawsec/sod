@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/0xrawsec/toast"
 )
 
 func TestSearchNoIndexObject(t *testing.T) {
@@ -159,4 +161,37 @@ func TestSearchDeleteObject(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestFieldPath(t *testing.T) {
+
+	tt := toast.FromT(t)
+
+	s := &nestedStruct{
+		A: 41,
+		B: 42,
+		C: 43,
+		In: inner{
+			D: 44,
+			E: 45,
+			F: "F",
+		},
+	}
+	s.In.Anon.G = "G"
+
+	i, ok := fieldByName(s, fieldPath("A"))
+	tt.Assert(ok)
+	tt.Assert(i.(int) == 41)
+
+	i, ok = fieldByName(s, fieldPath("In.D"))
+	tt.Assert(ok)
+	tt.Assert(i.(float64) == 44)
+
+	i, ok = fieldByName(s, fieldPath("In.Anon.G"))
+	tt.Assert(ok)
+	tt.Assert(i.(string) == "G")
+
+	i, ok = fieldByName(s, fieldPath(""))
+	tt.Assert(!ok)
+
 }

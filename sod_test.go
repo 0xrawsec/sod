@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/0xrawsec/toast"
 )
 
 const (
@@ -18,21 +20,22 @@ const (
 
 type testStruct struct {
 	Item
-	A int       `sod:"index"`
-	B int       `sod:"index"`
-	C string    `sod:"index"`
-	D int16     `sod:"index"`
-	E int32     `sod:"index"`
-	F int64     `sod:"index"`
-	G uint8     `sod:"index"`
-	H uint16    `sod:"index"`
-	I uint32    `sod:"index"`
-	J uint64    `sod:"index"`
-	K float64   `sod:"index"`
-	L int8      `sod:"index"`
-	M time.Time `sod:"index"`
-	N uint
-	O string
+	A      int       `sod:"index"`
+	B      int       `sod:"index"`
+	C      string    `sod:"index"`
+	D      int16     `sod:"index"`
+	E      int32     `sod:"index"`
+	F      int64     `sod:"index"`
+	G      uint8     `sod:"index"`
+	H      uint16    `sod:"index"`
+	I      uint32    `sod:"index"`
+	J      uint64    `sod:"index"`
+	K      float64   `sod:"index"`
+	L      int8      `sod:"index"`
+	M      time.Time `sod:"index"`
+	N      uint
+	O      string
+	Nested nestedStruct
 }
 
 type testStructUnique struct {
@@ -57,7 +60,8 @@ func genTestStructs(n int) chan Object {
 				c = "bar"
 				o = "foo"
 			}
-			ts := &testStruct{A: randMod(42),
+			ts := &testStruct{
+				A: randMod(42),
 				B: randMod(42),
 				C: c,
 				D: int16(randMod(42)),
@@ -149,30 +153,24 @@ func TestSimpleDb(t *testing.T) {
 	db := Open(dbpath)
 	defer controlDB(t, db)
 
+	tt := toast.FromT(t)
 	db.Create(&testStruct{}, DefaultSchema)
 
 	t1 := testStruct{A: 1, B: 2, C: "Test"}
-	if err := db.InsertOrUpdate(&t1); err != nil {
-		t.Errorf("Failed to save structure: %s", err)
-		t.FailNow()
-	}
+	tt.CheckErr(db.InsertOrUpdate(&t1))
 	t.Log(t1)
 
 	ts := testStruct{}
 
-	if _, err := db.Get(&ts); err == nil {
-		t.Error("This call should have failed")
-	}
+	_, err := db.Get(&ts)
+	tt.ExpectErr(err, os.ErrNotExist)
 
-	if _, err := db.Get(&t1); err != nil {
-		t.Error(err)
-	}
+	_, err = db.Get(&t1)
+	tt.CheckErr(err)
 
-	if o, err := db.GetByUUID(&testStruct{}, t1.UUID()); err != nil {
-		t.Error(err)
-	} else {
-		t.Log(o)
-	}
+	o, err := db.GetByUUID(&testStruct{}, t1.UUID())
+	tt.CheckErr(err)
+	t.Log(o)
 }
 
 func TestGetAll(t *testing.T) {
@@ -354,7 +352,7 @@ func TestCloseAndReopen(t *testing.T) {
 	if c, err := db.Search(&testStruct{}, "A", "<", 10).Collect(); err != nil {
 		t.Error(err)
 	} else {
-		t.Logf("Search result len: %d", len(c))
+		t.Logf("Search result len: %d", len(c))
 		for _, o := range c {
 			ts := o.(*testStruct)
 			if ts.A >= 10 {
@@ -783,16 +781,31 @@ func TestDeleteUniqueObject(t *testing.T) {
 
 func stress(t *testing.T, db *DB, jobs int) {
 	wg := sync.WaitGroup{}
+
+	if cnt, err := db.Count(&testStruct{}); err != nil {
+		t.Error(err)
+	} else {
+		t.Logf("Stressing out db with %d object", cnt)
+	}
+
 	for i := 0; i < jobs; i++ {
 		wg.Add(1)
+		n := i
 		go func() {
 			defer wg.Done()
+			var s []*testStruct
+
 			time.Sleep(time.Second * time.Duration(rand.Int()%15))
-			if objs, err := db.Search(&testStruct{}, "A", "<", rand.Int()%42).Collect(); err != nil {
+			t.Logf("starting job %d", n)
+			timer := time.Now()
+
+			if err := db.Search(&testStruct{}, "A", "<", rand.Int()%42).Assign(&s); err != nil {
 				t.Error(err)
 			} else {
-				for _, o := range objs {
-					ts := o.(*testStruct)
+				t.Logf("job %d: search time = %s", n, time.Since(timer))
+				t.Logf("job %d: modifying %d objects", n, len(s))
+				timer = time.Now()
+				for _, ts := range s {
 					ts.A = 4242
 					db.InsertOrUpdate(ts)
 					if rand.Int()%5 == 0 {
@@ -801,8 +814,9 @@ func stress(t *testing.T, db *DB, jobs int) {
 						}
 					}
 				}
+				t.Logf("job %d: modification time = %s", n, time.Since(timer))
 			}
-
+			t.Logf("stopping job %d", n)
 		}()
 	}
 	wg.Wait()
@@ -811,7 +825,7 @@ func stress(t *testing.T, db *DB, jobs int) {
 func TestAsyncWrites(t *testing.T) {
 	size := 10000
 	s := DefaultSchema
-	s.Asynchrone(1000, 5)
+	s.Asynchrone(1000, 5*time.Second)
 
 	db := createFreshTestDb(size, s)
 
@@ -828,9 +842,11 @@ func TestAsyncWrites(t *testing.T) {
 	t.Logf("Deleted %d objects", search.Len())
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
 
+	t.Logf("Close and repopen")
 	db = closeAndReOpen(db)
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
 
+	t.Logf("Stressing out")
 	stress(t, db, 10)
 	db = closeAndReOpen(db)
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
@@ -841,7 +857,7 @@ func TestAsyncWritesFastDelete(t *testing.T) {
 	// been written yet to disk. This test checks for that bug
 	size := 10
 	s := DefaultSchema
-	s.Asynchrone(1000, 50)
+	s.Asynchrone(1000, 5*time.Second)
 
 	db := createFreshTestDb(size, s)
 
@@ -896,4 +912,84 @@ func TestValidation(t *testing.T) {
 	}
 	assert(errors.Is(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject), "insertion should fail")
 	assert(errors.Is(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject), "insertion should fail")
+}
+
+func TestAssign(t *testing.T) {
+	count := 100
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt := toast.FromT(t)
+
+	var ts *testStruct
+	tt.CheckErr(db.Search(&testStruct{}, "A", "<", 42).AssignOne(&ts))
+	t.Log(ts)
+	tt.ShouldPanic(func() { db.Search(&testStruct{}, "A", "<", 21).AssignOne(ts) })
+
+	var s []*testStruct
+	tt.CheckErr(db.Search(&testStruct{}, "A", "<", 21).And("B", ">", 21).Assign(&s))
+	t.Log(len(s))
+	for _, ts := range s {
+		tt.Assert(ts.A < 21)
+		t.Log(ts)
+	}
+
+	// should panic because s is not a *[]Object
+	tt.ShouldPanic(func() { db.Search(&testStruct{}, "A", "<", 21).Assign(s) })
+	// should panic because ts is not a slice
+	tt.ShouldPanic(func() { db.Search(&testStruct{}, "A", "=", 0).Assign(&ts) })
+}
+
+func TestNestedStruct(t *testing.T) {
+	var ts *testStruct
+
+	count := 100
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt := toast.FromT(t)
+	tt.CheckErr(db.Search(&testStruct{}, "A", "<", 42).AssignOne(&ts))
+	tt.CheckErr(db.Search(&testStruct{}, "Nested.C", "<", 42.0).AssignOne(&ts))
+	t.Log(ts)
+
+}
+
+func TestErrors(t *testing.T) {
+	count := 100
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt := toast.FromT(t)
+
+	var ts *testStruct
+	type wrongStruct struct {
+		Item
+		Sub struct {
+			A int
+		}
+	}
+	var s []*testStruct
+
+	tt.ExpectErr(db.Search(&testStruct{}, "UnknownField", "=", 0).AssignOne(&ts), ErrUnkownField)
+	tt.ExpectErr(db.Search(&testStruct{}, "UnknownField", "=", 0).Assign(&s), ErrUnkownField)
+
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 4242).AssignOne(&ts), ErrNoObjectFound)
+
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "<>", 0).AssignOne(&ts), ErrUnkownSearchOperator)
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "<>", 0).Assign(&s), ErrUnkownSearchOperator)
+
+	// C is not an int type so we should raise a casting error
+	tt.ExpectErr(db.Search(&testStruct{}, "C", "<", 0).Assign(&s), ErrCasting)
+	// should raise an error on non indexed field
+	tt.ExpectErr(db.Search(&testStruct{}, "N", ">", 0).Assign(&s), ErrCasting)
+
+	var wrong *wrongStruct
+	// testing to assign to a wrong Object
+	tt.ShouldPanic(func() { db.Search(&testStruct{}, "A", "<=", 42).AssignOne(&wrong) })
+
+	wrong = &wrongStruct{}
+	wrong.Sub.A = 42
+	db.Create(&wrongStruct{}, DefaultSchema)
+	tt.CheckErr(db.InsertOrUpdate(wrong))
+	tt.ExpectErr(db.Search(&wrongStruct{}, "Sub", "=", 42).AssignOne(&wrong), ErrUnknownKeyType)
 }

@@ -112,7 +112,8 @@ func CamelToSnake(camel string) string {
 }
 
 func stype(i interface{}) string {
-	return typeof(i).Name()
+	//return typeof(i).Name()
+	return typeof(i).String()
 }
 
 func typeof(i interface{}) reflect.Type {
@@ -149,4 +150,8 @@ func dbgLock(lock string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "%s\n", lock)
 	}
+}
+
+func fieldPath(path string) []string {
+	return strings.Split(path, ".")
 }

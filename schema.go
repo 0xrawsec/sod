@@ -3,7 +3,6 @@ package sod
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -89,22 +88,9 @@ func (s *Schema) Initialize(o Object) {
 	t := typeof(o)
 	indexedFields := make([]FieldDescriptor, 0, t.NumField())
 
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if value, ok := f.Tag.Lookup("sod"); ok {
-			fd := FieldDescriptor{Name: f.Name}
-			for _, v := range strings.Split(value, ",") {
-				switch v {
-				case "index":
-					fd.Index = true
-				case "unique":
-					fd.Index = true
-					fd.Constraint.Unique = true
-				}
-			}
-			if fd.Index {
-				indexedFields = append(indexedFields, fd)
-			}
+	for _, fd := range fieldDescriptors(o) {
+		if fd.Index {
+			indexedFields = append(indexedFields, fd)
 		}
 	}
 

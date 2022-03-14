@@ -16,17 +16,18 @@ import (
 
 var (
 	DefaultPermissions = fs.FileMode(0700)
-	LowercaseNames     = true
+	LowercaseNames     = false
 
 	uuidRegexp = regexp.MustCompile(`(?i:^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$)`)
 )
 
 type objectStore struct {
+	sync.RWMutex
 	m map[string]map[string]Object
 }
 
 func newObjectStore() *objectStore {
-	return &objectStore{make(map[string]map[string]Object)}
+	return &objectStore{m: make(map[string]map[string]Object)}
 }
 
 func (c *objectStore) key(o Object) string {
@@ -34,6 +35,9 @@ func (c *objectStore) key(o Object) string {
 }
 
 func (c *objectStore) put(o Object) {
+	c.Lock()
+	defer c.Unlock()
+
 	k := stype(o)
 	if _, ok := c.m[k]; !ok {
 		c.m[k] = make(map[string]Object)
@@ -42,6 +46,9 @@ func (c *objectStore) put(o Object) {
 }
 
 func (c *objectStore) get(in Object) (out Object, ok bool) {
+	c.RLock()
+	defer c.RUnlock()
+
 	k := stype(in)
 	if _, ok = c.m[k]; ok {
 		out, ok = c.m[k][in.UUID()]
@@ -50,6 +57,9 @@ func (c *objectStore) get(in Object) (out Object, ok bool) {
 }
 
 func (c *objectStore) delete(o Object) {
+	c.Lock()
+	defer c.Unlock()
+
 	k := stype(o)
 	if _, ok := c.m[k]; ok {
 		delete(c.m[k], o.UUID())
@@ -57,6 +67,9 @@ func (c *objectStore) delete(o Object) {
 }
 
 func (c *objectStore) count(of Object) (n int) {
+	c.RLock()
+	defer c.RUnlock()
+
 	k := stype(of)
 	if _, ok := c.m[k]; ok {
 		return len(c.m[k])
@@ -313,7 +326,7 @@ func (db *DB) search(o Object, field, operator string, value interface{}, constr
 	var err error
 
 	if s, err = db.schema(o); err != nil {
-		return &Search{err: err}
+		return &Search{db: db, err: err}
 	}
 
 	if f, err = s.ObjectsIndex.Search(o, field, operator, value, constrain); err != nil {
@@ -321,7 +334,7 @@ func (db *DB) search(o Object, field, operator string, value interface{}, constr
 		if errors.Is(err, ErrFieldNotIndexed) {
 			return db.searchAll(o, field, operator, value, constrain)
 		}
-		return &Search{err: err}
+		return &Search{db: db, err: err}
 	} else {
 		return newSearch(db, o, f, err)
 	}
@@ -495,12 +508,16 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 	var iter *Iterator
 	var err error
 	var s *Schema
+	var search *IndexedField
 
 	f := make([]*IndexedField, 0)
-	search := searchField(value)
+
+	if search, err = searchField(value); err != nil {
+		return &Search{db: db, err: err}
+	}
 
 	if s, err = db.schema(o); err != nil {
-		return &Search{err: err}
+		return &Search{db: db, err: err}
 	}
 
 	// building up the iterator out of constrain
@@ -511,31 +528,46 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 		}
 		iter = &Iterator{db: db, i: 0, uuids: uuids, t: typeof(o)}
 	} else if iter, err = db.Iterator(o); err != nil {
-		return &Search{err: err}
+		return &Search{db: db, err: err}
 	}
 
 	// we go through the iterator
+	fp := fieldPath(field)
+	searchType := search.ValueTypeString()
+
 	for obj, err := iter.Next(); err == nil && err != ErrEOI; obj, err = iter.Next() {
 		var test *IndexedField
 		var value interface{}
+		var ok bool
+		var index uint64
 
-		if index, ok := s.ObjectsIndex.uuids[obj.UUID()]; ok {
-			if value, ok = fieldByName(obj, field); !ok {
-				return &Search{err: fmt.Errorf("%w %s", ErrUnkownField, field)}
-			}
-			if test, err = NewIndexedField(value, index); err != nil {
-				return &Search{err: err}
-			}
-			if test.Evaluate(operator, search) {
-				f = append(f, test)
-			}
-		} else {
+		if index, ok = s.ObjectsIndex.uuids[obj.UUID()]; !ok {
 			panic("index corrupted")
 		}
+
+		if value, ok = fieldByName(obj, fp); !ok {
+			return &Search{db: db, err: fmt.Errorf("%w %s", ErrUnkownField, field)}
+		}
+
+		if test, err = NewIndexedField(value, index); err != nil {
+			return &Search{db: db, err: err}
+		}
+
+		fieldType := test.ValueTypeString()
+
+		if fieldType != searchType {
+			return &Search{db: db, err: fmt.Errorf("%w, cannot cast %T(%v) to %s", ErrCasting, search.Value, search.Value, fieldType)}
+		}
+
+		if test.Evaluate(operator, search) {
+			f = append(f, test)
+		}
 	}
+
 	if err == ErrEOI {
 		err = nil
 	}
+
 	return newSearch(db, o, f, err)
 
 }

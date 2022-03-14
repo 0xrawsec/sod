@@ -122,20 +122,35 @@ func (s *Search) Limit(limit uint64) *Search {
 	return s
 }
 
+func (s *Search) one() (o Object, err error) {
+	var sr []Object
+
+	if s.err != nil {
+		err = s.err
+		return
+	}
+
+	if s.Len() == 0 {
+		err = ErrNoObjectFound
+		return
+	}
+
+	// prevent collecting all results and using only one
+	s.limit = 1
+	if sr, err = s.collect(); err != nil {
+		return
+	}
+	o = sr[0]
+	return
+}
+
 // One returns the first result found calling Collect function.
 // If no Object is found, ErrNoObjectFound is returned
 func (s *Search) One() (o Object, err error) {
-	var sr []Object
+	s.db.RLock()
+	defer s.db.RUnlock()
 
-	if s.Len() > 0 {
-		if sr, err = s.Collect(); err != nil {
-			return
-		}
-		o = sr[0]
-		return
-	}
-	err = ErrNoObjectFound
-	return
+	return s.one()
 }
 
 // AssignOne returns the first result found calling Collect function
@@ -143,9 +158,12 @@ func (s *Search) One() (o Object, err error) {
 // otherwise the function panics. If no Object is found, ErrNoObjectFound
 // is returned
 func (s *Search) AssignOne(target interface{}) (err error) {
+	s.db.RLock()
+	defer s.db.RUnlock()
+
 	var o Object
 
-	if o, err = s.One(); err != nil {
+	if o, err = s.one(); err != nil {
 		return err
 	} else {
 		v := reflect.ValueOf(target)
@@ -157,20 +175,47 @@ func (s *Search) AssignOne(target interface{}) (err error) {
 				return
 			}
 		}
-		panic("target must be a *sod.Object")
+		panic("target type must be a *sod.Object")
 	}
 }
 
-// Collect all the objects resulting from the search.
-// If a search has been made on an indexed field, results
-// will be in descending order by default. If you want to change
-// result order, call Reverse before.
-// NB: only search on indexed field(s) will be garanteed to be
-// ordered according to the last field searched.
-func (s *Search) Collect() (out []Object, err error) {
-	s.db.Lock()
-	defer s.db.Unlock()
+// Assign returns the first result found calling Collect function
+// and assign the Object found to target. Target must be a *sod.Object
+// otherwise the function panics. If no Object is found, ErrNoObjectFound
+// is returned
+func (s *Search) Assign(target interface{}) (err error) {
+	s.db.RLock()
+	defer s.db.RUnlock()
 
+	var objs []Object
+
+	if objs, err = s.collect(); err != nil {
+		return err
+	} else {
+		v := reflect.ValueOf(target)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+			t := reflect.TypeOf(target)
+			if v.Kind() == reflect.Slice {
+				// making a new slice for value pointed by target
+				v.Set(reflect.MakeSlice(t.Elem(), len(objs), len(objs)))
+				for i := 0; i < len(objs); i++ {
+					ov := reflect.ValueOf(objs[i])
+					if _, ok := ov.Interface().(Object); ok {
+						v.Index(i).Set(reflect.ValueOf(objs[i]))
+						continue
+					}
+					goto freakout
+				}
+				return
+			}
+		}
+	freakout:
+		panic("target type must be *[]sod.Object")
+	}
+}
+
+func (s *Search) collect() (out []Object, err error) {
 	var it *Iterator
 	var o Object
 
@@ -198,6 +243,19 @@ func (s *Search) Collect() (out []Object, err error) {
 	}
 
 	return
+}
+
+// Collect all the objects resulting from the search.
+// If a search has been made on an indexed field, results
+// will be in descending order by default. If you want to change
+// result order, call Reverse before.
+// NB: only search on indexed field(s) will be garanteed to be
+// ordered according to the last field searched.
+func (s *Search) Collect() (out []Object, err error) {
+	s.db.RLock()
+	defer s.db.RUnlock()
+
+	return s.collect()
 }
 
 // Err return any error encountered while searching
