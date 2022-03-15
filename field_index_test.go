@@ -355,7 +355,8 @@ func TestBuildFieldDescriptors(t *testing.T) {
 
 	//tt := toast.FromT(t)
 
-	t.Log(fieldDescriptors(&testStruct{}))
-	t.Log(fieldDescriptors(&nestedStruct{}))
+	t.Log(FieldDescriptors(&testStruct{}))
+	t.Log(FieldDescriptors(&nestedStruct{}))
+	t.Log(ObjectFingerprint(&testStruct{}))
 
 }

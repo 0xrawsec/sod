@@ -951,7 +951,6 @@ func TestNestedStruct(t *testing.T) {
 	tt.CheckErr(db.Search(&testStruct{}, "A", "<", 42).AssignOne(&ts))
 	tt.CheckErr(db.Search(&testStruct{}, "Nested.C", "<", 42.0).AssignOne(&ts))
 	t.Log(ts)
-
 }
 
 func TestErrors(t *testing.T) {
@@ -992,4 +991,22 @@ func TestErrors(t *testing.T) {
 	db.Create(&wrongStruct{}, DefaultSchema)
 	tt.CheckErr(db.InsertOrUpdate(wrong))
 	tt.ExpectErr(db.Search(&wrongStruct{}, "Sub", "=", 42).AssignOne(&wrong), ErrUnknownKeyType)
+
+	// should not raise any error as we have not change structure yet
+	db = closeAndReOpen(db)
+	tt.CheckErr(db.Create(&testStruct{}, DefaultSchema))
+
+	db = closeAndReOpen(db)
+	// we redefine a testStruct that does not correspond to the other one
+	type testStruct struct {
+		Item
+		Sub struct {
+			A int
+		}
+	}
+
+	fake := &testStruct{}
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 42).AssignOne(&fake), ErrStructureChanged)
+	tt.ExpectErr(db.InsertOrUpdate(&testStruct{}), ErrStructureChanged)
+	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrStructureChanged)
 }

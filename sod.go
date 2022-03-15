@@ -126,7 +126,16 @@ func (db *DB) loadSchema(of Object) (s *Schema, err error) {
 		if err = UnmarshalJsonFile(path, &s); err != nil {
 			return
 		}
-		s.Initialize(of)
+
+		// we initialize schema from object
+		if err = s.Initialize(of); err != nil {
+			return
+		}
+		// we control schema and if object struct did not change
+		if err = s.control(); err != nil {
+			return
+		}
+
 		db.schemas[stype(of)] = s
 		return
 	}
@@ -438,21 +447,30 @@ func (db *DB) Create(o Object, s Schema) (err error) {
 	defer db.Unlock()
 	var es *Schema
 
-	// the schema is existing and we don't need to build a new one
-	if es, err = db.schema(o); err == nil {
+	es, err = db.schema(o)
+
+	switch {
+	case err == nil:
+		// the schema is existing and we don't need to build a new one
 		// update existing schema with changes
 		es.update(&s)
 		return db.saveSchema(o, es, true)
-	}
 
-	// we need to create a new schema
-	s.Initialize(o)
+	case errors.Is(err, fs.ErrNotExist):
+		// we need to create a new schema
+		if err = s.Initialize(o); err != nil {
+			return
+		}
 
-	if err = db.saveSchema(o, &s, false); err != nil {
+		if err = db.saveSchema(o, &s, false); err != nil {
+			return
+		}
+
+		db.schemas[stype(o)] = &s
+
+	default:
 		return
 	}
-
-	db.schemas[stype(o)] = &s
 
 	return
 }

@@ -3,6 +3,7 @@ package sod
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -11,8 +12,9 @@ const (
 )
 
 var (
-	ErrBadSchema       = errors.New("schema must be a file")
-	ErrMissingObjIndex = errors.New("schema is missing object index")
+	ErrBadSchema        = errors.New("schema must be a file")
+	ErrMissingObjIndex  = errors.New("schema is missing object index")
+	ErrStructureChanged = errors.New("object structure changed")
 
 	DefaultSchema = Schema{Extension: ".json"}
 )
@@ -55,6 +57,7 @@ func (a *Async) UnmarshalJSON(b []byte) (err error) {
 
 type Schema struct {
 	object       Object
+	Fingerprint  string `json:"fingerprint"`
 	Extension    string `json:"extension"`
 	Cache        bool   `json:"cache"`
 	AsyncWrites  *Async `json:"async-writes,omitempty"`
@@ -78,25 +81,43 @@ func (s *Schema) asyncWritesEnabled() bool {
 	return false
 }
 
-func (s *Schema) control() error {
+func (s *Schema) control() (err error) {
+	var new string
+
+	if new, err = ObjectFingerprint(s.object); err != nil {
+		return
+	}
+
+	if new != s.Fingerprint {
+		return fmt.Errorf("%T %w", s.object, ErrStructureChanged)
+	}
+
 	return s.ObjectsIndex.Control()
 }
 
-func (s *Schema) Initialize(o Object) {
+func (s *Schema) Initialize(o Object) (err error) {
 	s.object = o
 
 	t := typeof(o)
 	indexedFields := make([]FieldDescriptor, 0, t.NumField())
 
-	for _, fd := range fieldDescriptors(o) {
+	for _, fd := range FieldDescriptors(o) {
 		if fd.Index {
 			indexedFields = append(indexedFields, fd)
 		}
 	}
 
+	if s.Fingerprint == "" {
+		if s.Fingerprint, err = ObjectFingerprint(o); err != nil {
+			return
+		}
+	}
+	// initializes ObjectsIndex if needed
 	if s.ObjectsIndex == nil {
 		s.ObjectsIndex = NewIndex(indexedFields...)
 	}
+
+	return
 }
 
 // Asynchrone makes the data described by this schema managed asynchronously
