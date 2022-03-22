@@ -25,7 +25,7 @@ github.com/0xrawsec/sod/field_index.go:145:	Has			0.0%
 github.com/0xrawsec/sod/field_index.go:149:	SearchEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:162:	SearchNotEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:172:	SearchGreaterOrEqual	100.0%
-github.com/0xrawsec/sod/field_index.go:184:	SearchGreater		81.8%
+github.com/0xrawsec/sod/field_index.go:184:	SearchGreater		90.9%
 github.com/0xrawsec/sod/field_index.go:208:	SearchLess		100.0%
 github.com/0xrawsec/sod/field_index.go:218:	SearchLessOrEqual	100.0%
 github.com/0xrawsec/sod/field_index.go:235:	SearchByRegex		81.8%
@@ -139,7 +139,7 @@ github.com/0xrawsec/sod/sod.go:308:		writeObject		66.7%
 github.com/0xrawsec/sod/sod.go:335:		getByUUID		100.0%
 github.com/0xrawsec/sod/sod.go:341:		get			92.9%
 github.com/0xrawsec/sod/sod.go:368:		insertOrUpdate		88.2%
-github.com/0xrawsec/sod/sod.go:408:		delete			91.7%
+github.com/0xrawsec/sod/sod.go:408:		delete			100.0%
 github.com/0xrawsec/sod/sod.go:431:		search			100.0%
 github.com/0xrawsec/sod/sod.go:454:		flush			75.0%
 github.com/0xrawsec/sod/sod.go:466:		flushAll		75.0%
@@ -190,4 +190,4 @@ github.com/0xrawsec/sod/utils.go:161:		dbgLock			0.0%
 github.com/0xrawsec/sod/utils.go:170:		fieldPath		100.0%
 github.com/0xrawsec/sod/utils.go:174:		unmarshalJsonFile	80.0%
 github.com/0xrawsec/sod/utils.go:202:		writeReader		60.0%
-total:						(statements)		87.8%
+total:						(statements)		88.0%

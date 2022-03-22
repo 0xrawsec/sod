@@ -1,13 +1,3 @@
-github.com/0xrawsec/toast v1.1.1 h1:5tuZxo1PTtpxtstolDe433b/iNhx6Onh4RZEu9rbMAU=
-github.com/0xrawsec/toast v1.1.1/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
-github.com/0xrawsec/toast v1.1.2 h1:DLWsWoC/snjjrgzidxpt1D60Is7k8EUlUaGDt+Y8P4I=
-github.com/0xrawsec/toast v1.1.2/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
-github.com/0xrawsec/toast v1.2.0 h1:wKP1W0R2RcuJmVzpRcWTRi7pSAiR/piM2XtHIwxMRtc=
-github.com/0xrawsec/toast v1.2.0/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
-github.com/0xrawsec/toast v1.2.1 h1:askdLfoz1KByjnY1n+GGNocoStHetcscMFoBqLBlVlI=
-github.com/0xrawsec/toast v1.2.1/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
-github.com/0xrawsec/toast v1.2.2 h1:EU81nAcugyNMOVdyAY6YeL6QmHMcZGtaX6S2OlEk5+s=
-github.com/0xrawsec/toast v1.2.2/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
 github.com/0xrawsec/toast v1.2.3 h1:nTs5NyAdmSoDfxlYjMVMYb9wj3C/MFpnoIoQBPUsHXg=
 github.com/0xrawsec/toast v1.2.3/go.mod h1:sRvfNYxqVoH1sZnE18s9Knm/lkbarTGNvaNVBf2/h1k=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
