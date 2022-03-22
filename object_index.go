@@ -19,22 +19,6 @@ func IsUnique(err error) bool {
 	return errors.Is(err, ErrFieldUnique)
 }
 
-type jsonIndex struct {
-	Fields    map[string]*fieldIndex `json:"fields"`
-	ObjectIds map[uint64]string      `json:"object-ids"`
-}
-
-type Index struct {
-	// used to generate ObjectId
-	i uint64
-	// mapping Object UUID -> ObjectId (in the index)
-	uuids map[string]uint64
-
-	Fields map[string]*fieldIndex
-	// mapping ObjectId -> Object UUID
-	ObjectIds map[uint64]string
-}
-
 func valueFieldByName(v reflect.Value, fields []string) (out reflect.Value, ok bool) {
 
 	if v.Kind() == reflect.Ptr {
@@ -45,7 +29,12 @@ func valueFieldByName(v reflect.Value, fields []string) (out reflect.Value, ok b
 
 	// if pointer we dereference
 	if out.Kind() == reflect.Ptr {
-		out = out.Elem()
+		if out.IsZero() {
+			out = reflect.New(out.Type().Elem())
+		} else {
+			out = out.Elem()
+		}
+		return valueFieldByName(out, fields[1:])
 	}
 
 	if out.Kind() == reflect.Struct && len(fields) > 1 {
@@ -66,27 +55,28 @@ func fieldByName(o Object, fpath []string) (i interface{}, ok bool) {
 	return v.Interface(), ok
 }
 
-func NewIndex(fields ...FieldDescriptor) *Index {
-	i := &Index{i: 0,
-		uuids:     make(map[string]uint64),
-		Fields:    make(map[string]*fieldIndex),
-		ObjectIds: make(map[uint64]string)}
-
-	for _, fd := range fields {
-		if fd.Index || fd.Constraint.Unique {
-			i.Fields[fd.Path] = NewFieldIndex(fd)
-		}
-	}
-
-	return i
+type jsonObjIndex struct {
+	Fields    map[string]*fieldIndex `json:"fields"`
+	ObjectIds map[uint64]string      `json:"object-ids"`
 }
 
-func (in *Index) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&jsonIndex{Fields: in.Fields, ObjectIds: in.ObjectIds})
+type objIndex struct {
+	// used to generate ObjectId
+	i uint64
+	// mapping Object UUID -> ObjectId (in the index)
+	uuids map[string]uint64
+
+	Fields map[string]*fieldIndex
+	// mapping ObjectId -> Object UUID
+	ObjectIds map[uint64]string
 }
 
-func (in *Index) UnmarshalJSON(data []byte) error {
-	tmp := jsonIndex{}
+func (in *objIndex) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&jsonObjIndex{Fields: in.Fields, ObjectIds: in.ObjectIds})
+}
+
+func (in *objIndex) UnmarshalJSON(data []byte) error {
+	tmp := jsonObjIndex{}
 	if err := json.Unmarshal(data, &tmp); err != nil {
 		return err
 	}
@@ -109,10 +99,25 @@ func (in *Index) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (in *Index) SatisfyAll(o Object) (err error) {
+func newIndex(fields FieldDescMap) *objIndex {
+	i := &objIndex{i: 0,
+		uuids:     make(map[string]uint64),
+		Fields:    make(map[string]*fieldIndex),
+		ObjectIds: make(map[uint64]string)}
+
+	for _, fd := range fields {
+		if fd.Constraints.Index || fd.Constraints.Unique {
+			i.Fields[fd.Path] = newFieldIndex(fd)
+		}
+	}
+
+	return i
+}
+
+func (in *objIndex) satisfyAll(o Object) (err error) {
 	for fn, fi := range in.Fields {
 		if v, ok := fieldByName(o, fi.nameSplit); ok {
-			var iField *IndexedField
+			var iField *indexedField
 
 			if iField, err = searchField(v); err != nil {
 				return
@@ -130,10 +135,10 @@ func (in *Index) SatisfyAll(o Object) (err error) {
 	return
 }
 
-func (in *Index) InsertOrUpdate(o Object) (err error) {
+func (in *objIndex) insertOrUpdate(o Object) (err error) {
 	// check constraint on all index first to prevent
 	// inconsistencies across indexes
-	if err = in.SatisfyAll(o); err != nil {
+	if err = in.satisfyAll(o); err != nil {
 		return
 	}
 
@@ -166,18 +171,18 @@ func (in *Index) InsertOrUpdate(o Object) (err error) {
 	return nil
 }
 
-func (in *Index) Delete(o Object) {
-	if index, ok := in.uuids[o.UUID()]; ok {
+func (in *objIndex) deleteByUUID(uuid string) {
+	if index, ok := in.uuids[uuid]; ok {
 		for _, fi := range in.Fields {
 			fi.Delete(index)
 		}
 		delete(in.ObjectIds, index)
-		delete(in.uuids, o.UUID())
+		delete(in.uuids, uuid)
 	}
 }
 
-func (in *Index) Search(o Object, field string, operator string, value interface{}, constrain []*IndexedField) ([]*IndexedField, error) {
-	var iField *IndexedField
+func (in *objIndex) search(o Object, field string, operator string, value interface{}, constrain []*indexedField) ([]*indexedField, error) {
+	var iField *indexedField
 	var err error
 
 	if _, ok := fieldByName(o, fieldPath(field)); ok {
@@ -188,7 +193,7 @@ func (in *Index) Search(o Object, field string, operator string, value interface
 
 		// if field is indexed
 		if fi, ok := in.Fields[field]; ok {
-			if fi.Cast != iField.ValueTypeString() {
+			if fi.Cast != iField.valueTypeString() {
 				return nil, fmt.Errorf("%w, cannot cast %T(%v) to %s", ErrCasting, value, value, fi.Cast)
 			}
 
@@ -221,18 +226,18 @@ func (in *Index) Search(o Object, field string, operator string, value interface
 	}
 }
 
-func (in *Index) Control() error {
+func (in *objIndex) control() error {
 	for fn := range in.Fields {
 		if !in.Fields[fn].Control() {
 			return fmt.Errorf("field index %s is not ordered", fn)
 		}
-		if in.Fields[fn].Len() != in.Len() {
-			return fmt.Errorf("index and fields index must have the same size, len(index)=%d len(index[%s])=%d", in.Len(), fn, in.Fields[fn].Len())
+		if in.Fields[fn].Len() != in.len() {
+			return fmt.Errorf("index and fields index must have the same size, len(index)=%d len(index[%s])=%d", in.len(), fn, in.Fields[fn].Len())
 		}
 	}
 	return nil
 }
 
-func (in *Index) Len() int {
+func (in *objIndex) len() int {
 	return len(in.ObjectIds)
 }

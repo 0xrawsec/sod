@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-func name(i interface{}) {
-
-}
-
 func TestObjectName(t *testing.T) {
 	t.Log(reflect.TypeOf(&testStruct{}).Elem().String())
 	t.Log(reflect.TypeOf(&testStruct{}).Elem().Name())

@@ -15,8 +15,8 @@ type fieldIndex struct {
 	// IndexedField.Value is an interface{}
 	Cast        string          `json:"cast"`
 	Constraints Constraints     `json:"constraints"`
-	Index       []*IndexedField `json:"index"`
-	objectIds   map[uint64]*IndexedField
+	Index       []*indexedField `json:"index"`
+	objectIds   map[uint64]*indexedField
 	nameSplit   []string
 }
 
@@ -25,7 +25,7 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 		Name        string          `json:"name"`
 		Cast        string          `json:"cast"`
 		Constraints Constraints     `json:"constraints"`
-		Index       []*IndexedField `json:"index"`
+		Index       []*indexedField `json:"index"`
 	}
 	t := tmp{}
 	if err := json.Unmarshal(data, &t); err != nil {
@@ -39,19 +39,19 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	i.nameSplit = fieldPath(i.Name)
 
 	for _, f := range i.Index {
-		f.ValueTypeFromString(i.Cast)
+		f.valueTypeFromString(i.Cast)
 	}
 
-	i.objectIds = make(map[uint64]*IndexedField)
+	i.objectIds = make(map[uint64]*indexedField)
 	for _, k := range i.Index {
 		i.objectIds[k.ObjectId] = k
 	}
 	return nil
 }
 
-// NewFieldIndex returns an empty initialized slice. Opts takes len and cap in
+// newFieldIndex returns an empty initialized slice. Opts takes len and cap in
 // order to initialize the underlying slice
-func NewFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
+func newFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 	l, c := 0, 0
 	if len(opts) >= 1 {
 		l = opts[0]
@@ -61,24 +61,24 @@ func NewFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 	}
 	return &fieldIndex{
 		Name:        desc.Path,
-		Index:       make([]*IndexedField, l, c),
-		Constraints: desc.Constraint,
-		objectIds:   make(map[uint64]*IndexedField),
+		Index:       make([]*indexedField, l, c),
+		Constraints: desc.Constraints,
+		objectIds:   make(map[uint64]*indexedField),
 		nameSplit:   fieldPath(desc.Path)}
 }
 
-func (in *fieldIndex) Initialize(k *IndexedField) {
+func (in *fieldIndex) Initialize(k *indexedField) {
 	if in.Cast == "" {
-		in.Cast = k.ValueTypeString()
+		in.Cast = k.valueTypeString()
 	}
 }
 
-func (in *fieldIndex) InsertionIndex(k *IndexedField) int {
+func (in *fieldIndex) InsertionIndex(k *indexedField) int {
 	return in.insertionIndexRec(k, 0, in.Len())
 }
 
 // Recursive function to search for the next index less than Sortable
-func (in *fieldIndex) insertionIndexRec(k *IndexedField, i, j int) int {
+func (in *fieldIndex) insertionIndexRec(k *indexedField, i, j int) int {
 	// case where index is empty
 	if in.Len() == 0 {
 		return 0
@@ -86,7 +86,7 @@ func (in *fieldIndex) insertionIndexRec(k *IndexedField, i, j int) int {
 
 	// case where there is only one element
 	if in.Len() == 1 {
-		if in.Index[0].Less(k) {
+		if in.Index[0].less(k) {
 			return 0
 		}
 		return 1
@@ -94,7 +94,7 @@ func (in *fieldIndex) insertionIndexRec(k *IndexedField, i, j int) int {
 
 	// only one element to test == s[i:i+1]
 	if j-i == 1 {
-		if in.Index[i].Less(k) {
+		if in.Index[i].less(k) {
 			// before i
 			return i
 		}
@@ -104,23 +104,23 @@ func (in *fieldIndex) insertionIndexRec(k *IndexedField, i, j int) int {
 
 	// recursive search
 	pivot := ((j + 1 - i) / 2) + i
-	if in.Index[pivot].Less(k) {
+	if in.Index[pivot].less(k) {
 		return in.insertionIndexRec(k, i, pivot)
 	}
 
 	return in.insertionIndexRec(k, pivot, j)
 }
 
-func (in *fieldIndex) rangeEqual(k *IndexedField) (i, j int) {
+func (in *fieldIndex) rangeEqual(k *indexedField) (i, j int) {
 	j = in.InsertionIndex(k) - 1
-	for i = j; i >= 0 && in.Index[i].Equal(k); i-- {
+	for i = j; i >= 0 && in.Index[i].equal(k); i-- {
 	}
 	i++
 	return
 }
 
 // Satisfy checks whether the value satisfies the constraints fixed by index
-func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue *IndexedField) (err error) {
+func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue *indexedField) (err error) {
 
 	constraint := in.Constraints
 
@@ -138,49 +138,50 @@ func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue *IndexedField) (e
 			}
 		}
 	}
+
 	return
 }
 
-func (in *fieldIndex) Has(value *IndexedField) bool {
+func (in *fieldIndex) Has(value *indexedField) bool {
 	return len(in.SearchEqual(value)) > 0
 }
 
-func (in *fieldIndex) SearchEqual(value *IndexedField) []*IndexedField {
+func (in *fieldIndex) SearchEqual(value *indexedField) []*indexedField {
 
 	i, j := in.rangeEqual(value)
 
 	if i == j {
 		if in.Len() > 0 {
-			return []*IndexedField{in.Index[i]}
+			return []*indexedField{in.Index[i]}
 		}
 	}
 
 	return in.Index[i : j+1]
 }
 
-func (in *fieldIndex) SearchNotEqual(value *IndexedField) (f []*IndexedField) {
+func (in *fieldIndex) SearchNotEqual(value *indexedField) (f []*indexedField) {
 
 	i, j := in.rangeEqual(value)
-	f = make([]*IndexedField, len(in.Index[0:i]))
+	f = make([]*indexedField, len(in.Index[0:i]))
 	copy(f, in.Index[0:i])
 	f = append(f, in.Index[j+1:]...)
 
 	return
 }
 
-func (in *fieldIndex) SearchGreaterOrEqual(value *IndexedField) []*IndexedField {
+func (in *fieldIndex) SearchGreaterOrEqual(value *indexedField) []*indexedField {
 
 	i := in.InsertionIndex(value)
 
 	// the only case when it is (logicaly) possible is when index is empty
 	if i == 0 {
-		return []*IndexedField{}
+		return []*indexedField{}
 	}
 
 	return in.Index[:i]
 }
 
-func (in *fieldIndex) SearchGreater(value *IndexedField) (f []*IndexedField) {
+func (in *fieldIndex) SearchGreater(value *indexedField) (f []*indexedField) {
 
 	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
@@ -189,32 +190,32 @@ func (in *fieldIndex) SearchGreater(value *IndexedField) (f []*IndexedField) {
 
 	// we need to go backward until one element is greater
 	for i >= 0 {
-		if in.Index[i].Greater(value) {
+		if in.Index[i].greater(value) {
 			break
 		}
 		i--
 	}
 
 	if i == 0 {
-		if in.Len() > 0 && in.Index[0].Greater(value) {
-			return []*IndexedField{in.Index[0]}
+		if in.Len() > 0 && in.Index[0].greater(value) {
+			return []*indexedField{in.Index[0]}
 		}
 	}
 
 	return in.Index[:i+1]
 }
 
-func (in *fieldIndex) SearchLess(value *IndexedField) []*IndexedField {
+func (in *fieldIndex) SearchLess(value *indexedField) []*indexedField {
 
 	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
-		return []*IndexedField{}
+		return []*indexedField{}
 	}
 
 	return in.Index[i:]
 }
 
-func (in *fieldIndex) SearchLessOrEqual(value *IndexedField) []*IndexedField {
+func (in *fieldIndex) SearchLessOrEqual(value *indexedField) []*indexedField {
 
 	i := in.InsertionIndex(value)
 	if i > in.lastIndex() {
@@ -222,7 +223,7 @@ func (in *fieldIndex) SearchLessOrEqual(value *IndexedField) []*IndexedField {
 	}
 
 	for i >= 0 {
-		if in.Index[i].Greater(value) {
+		if in.Index[i].greater(value) {
 			break
 		}
 		i--
@@ -231,10 +232,10 @@ func (in *fieldIndex) SearchLessOrEqual(value *IndexedField) []*IndexedField {
 	return in.Index[i+1:]
 }
 
-func (in *fieldIndex) SearchByRegex(value *IndexedField) (out []*IndexedField, err error) {
+func (in *fieldIndex) SearchByRegex(value *indexedField) (out []*indexedField, err error) {
 	var rex *regexp.Regexp
 
-	out = make([]*IndexedField, 0)
+	out = make([]*indexedField, 0)
 
 	if sval, ok := value.Value.(string); ok {
 		if rex, err = regexp.Compile(sval); err != nil {
@@ -255,7 +256,7 @@ func (in *fieldIndex) SearchByRegex(value *IndexedField) (out []*IndexedField, e
 	return
 }
 
-func (in *fieldIndex) insert(field *IndexedField) {
+func (in *fieldIndex) insert(field *indexedField) {
 
 	i := in.InsertionIndex(field)
 
@@ -274,9 +275,9 @@ func (in *fieldIndex) insert(field *IndexedField) {
 
 // Insertion method in the slice for a structure implementing Sortable
 func (in *fieldIndex) Insert(value interface{}, objid uint64) (err error) {
-	var field *IndexedField
+	var field *indexedField
 
-	if field, err = NewIndexedField(value, objid); err != nil {
+	if field, err = newIndexedField(value, objid); err != nil {
 		return
 	}
 
@@ -299,15 +300,15 @@ func (in *fieldIndex) Update(value interface{}, objid uint64) (err error) {
 	return in.Insert(value, objid)
 }
 
-func (in *fieldIndex) SearchKey(k *IndexedField) (i int, ok bool) {
+func (in *fieldIndex) SearchKey(k *indexedField) (i int, ok bool) {
 
 	i, j := in.rangeEqual(k)
 	if i == j {
-		return i, in.Index[i].DeepEqual(k)
+		return i, in.Index[i].deepEqual(k)
 	}
 
 	for ; i <= j; i++ {
-		if in.Index[i].DeepEqual(k) {
+		if in.Index[i].deepEqual(k) {
 			return i, true
 		}
 	}
@@ -320,7 +321,7 @@ func (in *fieldIndex) Delete(objid uint64) {
 	if field, ok := in.objectIds[objid]; ok {
 		if i, ok := in.SearchKey(field); ok {
 			if len(in.Index) == 1 {
-				in.Index = make([]*IndexedField, 0)
+				in.Index = make([]*indexedField, 0)
 			} else {
 				in.Index = append(in.Index[:i], in.Index[i+1:]...)
 			}
@@ -336,8 +337,8 @@ func (in *fieldIndex) Delete(objid uint64) {
 // Constrain returns an index which intersects with other fields
 // we can build some query logic based on that function searching an
 // index from the result of another index
-func (in *fieldIndex) Constrain(fields []*IndexedField) (new *fieldIndex) {
-	new = NewFieldIndex(FieldDescriptor{}, 0, len(fields))
+func (in *fieldIndex) Constrain(fields []*indexedField) (new *fieldIndex) {
+	new = newFieldIndex(FieldDescriptor{}, 0, len(fields))
 	for _, fi := range fields {
 		if field, ok := in.objectIds[fi.ObjectId]; ok {
 			new.insert(field)
@@ -347,7 +348,7 @@ func (in *fieldIndex) Constrain(fields []*IndexedField) (new *fieldIndex) {
 }
 
 // Slice returns the underlying slice
-func (in *fieldIndex) Slice() []*IndexedField {
+func (in *fieldIndex) Slice() []*indexedField {
 	return in.Index
 }
 
@@ -360,7 +361,7 @@ func (in *fieldIndex) Control() bool {
 
 	v := in.Index[0]
 	for _, tv := range in.Index {
-		if !v.Equal(tv) && !tv.Less(v) {
+		if !v.equal(tv) && !tv.less(v) {
 			return false
 		}
 		v = tv

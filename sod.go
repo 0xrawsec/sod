@@ -1,6 +1,7 @@
 package sod
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,63 +18,131 @@ import (
 var (
 	DefaultPermissions = fs.FileMode(0700)
 	LowercaseNames     = false
+	ErrWrongObjectType = errors.New("wrong objet type")
 
 	uuidRegexp = regexp.MustCompile(`(?i:^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$)`)
 )
 
-type objectStore struct {
+type objectMap struct {
 	sync.RWMutex
-	m map[string]map[string]Object
+	m map[string]Object
 }
 
-func newObjectStore() *objectStore {
-	return &objectStore{m: make(map[string]map[string]Object)}
+func newObjectMap() *objectMap {
+	return &objectMap{m: make(map[string]Object)}
 }
 
-func (c *objectStore) key(o Object) string {
-	return stype(o)
+func (m *objectMap) put(o Object) {
+	m.Lock()
+	defer m.Unlock()
+	m.m[o.UUID()] = CloneObject(o)
 }
 
-func (c *objectStore) put(o Object) {
-	c.Lock()
-	defer c.Unlock()
-
-	k := stype(o)
-	if _, ok := c.m[k]; !ok {
-		c.m[k] = make(map[string]Object)
-	}
-	c.m[k][o.UUID()] = o
-}
-
-func (c *objectStore) get(in Object) (out Object, ok bool) {
-	c.RLock()
-	defer c.RUnlock()
-
-	k := stype(in)
-	if _, ok = c.m[k]; ok {
-		out, ok = c.m[k][in.UUID()]
+func (m *objectMap) get(uuid string) (o Object, ok bool) {
+	m.RLock()
+	defer m.RUnlock()
+	if o, ok = m.m[uuid]; ok {
+		o = CloneObject(o)
 	}
 	return
 }
 
-func (c *objectStore) delete(o Object) {
-	c.Lock()
-	defer c.Unlock()
+func (m *objectMap) delete(uuid string) {
+	delete(m.m, uuid)
+}
+
+func (m *objectMap) lockDelete(uuid string) {
+	m.Lock()
+	defer m.Unlock()
+	m.delete(uuid)
+}
+
+func (m *objectMap) len() int {
+	m.RLock()
+	defer m.RUnlock()
+	return len(m.m)
+}
+
+func (m *objectMap) flush(db *DB) (err error) {
+	m.Lock()
+	defer m.Unlock()
+
+	for _, o := range m.m {
+		if e := db.writeObject(o); e != nil {
+			err = e
+		}
+		// we delete object from the list of objects to save
+		m.delete(o.UUID())
+	}
+	return
+}
+
+type objectStore struct {
+	sync.RWMutex
+	m map[string]*objectMap
+}
+
+func newObjectStore() *objectStore {
+	return &objectStore{m: make(map[string]*objectMap)}
+}
+
+func (s *objectStore) key(o Object) string {
+	return stype(o)
+}
+
+func (s *objectStore) put(o Object) {
+	s.Lock()
+	defer s.Unlock()
 
 	k := stype(o)
-	if _, ok := c.m[k]; ok {
-		delete(c.m[k], o.UUID())
+	if _, ok := s.m[k]; !ok {
+		s.m[k] = newObjectMap()
+	}
+	s.m[k].put(o)
+}
+
+func (s *objectStore) get(in Object) (out Object, ok bool) {
+	s.RLock()
+	defer s.RUnlock()
+
+	k := stype(in)
+	if _, ok = s.m[k]; ok {
+		out, ok = s.m[k].get(in.UUID())
+	}
+	return
+}
+
+func (s *objectStore) delete(o Object) {
+	s.Lock()
+	defer s.Unlock()
+
+	k := stype(o)
+	if _, ok := s.m[k]; ok {
+		s.m[k].lockDelete(o.UUID())
 	}
 }
 
-func (c *objectStore) count(of Object) (n int) {
-	c.RLock()
-	defer c.RUnlock()
+func (s *objectStore) count(of Object) (n int) {
+	s.RLock()
+	defer s.RUnlock()
 
 	k := stype(of)
-	if _, ok := c.m[k]; ok {
-		return len(c.m[k])
+	if _, ok := s.m[k]; ok {
+		return s.m[k].len()
 	}
+	return
+}
+
+func (s *objectStore) flush(db *DB) (err error) {
+	s.Lock()
+	defer s.Unlock()
+
+	for key := range s.m {
+		if e := s.m[key].flush(db); e != nil {
+			err = e
+		}
+	}
+
 	return
 }
 
@@ -88,6 +157,20 @@ type DB struct {
 }
 
 /***** Private Methods ******/
+
+func (db *DB) deleteSchema(o Object) (err error) {
+	var ok bool
+
+	dir := db.oDir(o)
+	path := filepath.Join(dir, SchemaFilename)
+	skey := stype(o)
+
+	if _, ok = db.schemas[skey]; ok {
+		delete(db.schemas, skey)
+	}
+
+	return os.Remove(path)
+}
 
 func (db *DB) saveSchema(o Object, s *Schema, override bool) (err error) {
 	var data []byte
@@ -123,16 +206,18 @@ func (db *DB) loadSchema(of Object) (s *Schema, err error) {
 	}
 
 	if stat.Mode().IsRegular() {
-		if err = UnmarshalJsonFile(path, &s); err != nil {
+		if err = unmarshalJsonFile(path, &s); err != nil {
 			return
 		}
 
 		// we initialize schema from object
-		if err = s.Initialize(of); err != nil {
+		if err = s.initialize(db, of); err != nil {
 			return
 		}
+
 		// we control schema and if object struct did not change
-		if err = s.control(); err != nil {
+		// we allow to cache schema if index is corrupted
+		if err = s.control(); err != nil && !errors.Is(err, ErrIndexCorrupted) {
 			return
 		}
 
@@ -153,9 +238,16 @@ func (db *DB) startAsyncWritesRoutine(s *Schema) {
 				for slept := time.Duration(0); ; slept += step {
 					n := db.safeCountPendingAsyncW(s.object)
 					if n >= s.AsyncWrites.Threshold || slept >= s.AsyncWrites.Timeout {
-						if err := db.FlushAllAndCommit(s.object); err != nil {
-							panic(err)
+						// enter critical section
+						db.Lock()
+						// checking db.ctx not to race with db.Close function
+						if db.ctx.Err() == nil {
+							if err := db.flushAllAndCommit(s.object); err != nil {
+								panic(err)
+							}
 						}
+						db.Unlock()
+						// leave critical section
 						break
 					}
 					time.Sleep(step)
@@ -184,7 +276,7 @@ func (db *DB) schema(of Object) (s *Schema, err error) {
 
 func (db *DB) itemname(o Object) string {
 	if LowercaseNames {
-		return CamelToSnake(stype(o))
+		return camelToSnake(stype(o))
 	}
 	return stype(o)
 }
@@ -194,7 +286,7 @@ func (db *DB) oDir(of Object) string {
 }
 
 func (db *DB) oPath(s *Schema, of Object) (path string) {
-	return filepath.Join(db.oDir(of), filename(of, s))
+	return filepath.Join(db.oDir(of), s.filename(of))
 }
 
 func (db *DB) exist(o Object) (ok bool, err error) {
@@ -213,9 +305,15 @@ func (db *DB) exist(o Object) (ok bool, err error) {
 	return stat.Mode().IsRegular() && err == nil, nil
 }
 
-func (db *DB) writeObject(o Object, path string) (err error) {
+func (db *DB) writeObject(o Object) (err error) {
 	var data []byte
+	var s *Schema
 
+	if s, err = db.schema(o); err != nil {
+		return
+	}
+
+	path := db.oPath(s, o)
 	if err = os.MkdirAll(filepath.Dir(path), DefaultPermissions); err != nil {
 		return
 	}
@@ -224,10 +322,19 @@ func (db *DB) writeObject(o Object, path string) (err error) {
 		return
 	}
 
-	if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
+	if err = writeReader(path, bytes.NewBuffer(data), DefaultPermissions, s.Compress); err != nil {
 		return
 	}
+	/*if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
+		return
+	}*/
+
 	return
+}
+
+func (db *DB) getByUUID(in Object, uuid string) (out Object, err error) {
+	in.Initialize(uuid)
+	return db.get(in)
 }
 
 // gets a single Object from the DB
@@ -247,8 +354,8 @@ func (db *DB) get(in Object) (out Object, err error) {
 		}
 	}
 
-	path = filepath.Join(db.oDir(in), filename(in, s))
-	err = UnmarshalJsonFile(path, in)
+	path = filepath.Join(db.oDir(in), s.filename(in))
+	err = unmarshalJsonFile(path, in)
 	out = in
 
 	// we cache the object
@@ -258,10 +365,7 @@ func (db *DB) get(in Object) (out Object, err error) {
 	return
 }
 
-func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
-	var path string
-	var schema *Schema
-
+func (db *DB) insertOrUpdate(s *Schema, o Object, commit bool) (err error) {
 	// this is a new object, we have to handle here
 	// potential uuid duplicates (even though it is very unlikely)
 	if o.UUID() == "" {
@@ -274,26 +378,21 @@ func (db *DB) insertOrUpdate(o Object, commit bool) (err error) {
 		}
 	}
 
-	if schema, err = db.schema(o); err != nil {
-		return
-	}
-
-	if schema.mustCache() {
+	if s.mustCache() {
 		db.cache.put(o)
 	}
 
-	if err = schema.Index(o); err != nil {
+	if err = s.index(o); err != nil {
 		return
 	}
 
-	if schema.asyncWritesEnabled() {
+	if s.asyncWritesEnabled() {
 		// we don't write object to disk but store
 		// it in a structure for later saving
 		db.asyncw.put(o)
 	} else {
 		// writing the object to disk
-		path = db.oPath(schema, o)
-		if err = db.writeObject(o, path); err != nil {
+		if err = db.writeObject(o); err != nil {
 			return
 		}
 
@@ -321,24 +420,27 @@ func (db *DB) delete(o Object) (err error) {
 	}
 
 	// unindexing object
-	s.Unindex(o)
-	path = filepath.Join(db.oDir(o), filename(o, s))
+	s.unindex(o)
+	path = filepath.Join(db.oDir(o), s.filename(o))
 	if isFileAndExist(path) {
 		return os.Remove(path)
 	}
 	return
 }
 
-func (db *DB) search(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
+func (db *DB) search(o Object, field, operator string, value interface{}, constrain []*indexedField) *Search {
 	var s *Schema
-	var f []*IndexedField
+	var f []*indexedField
 	var err error
 
 	if s, err = db.schema(o); err != nil {
 		return &Search{db: db, err: err}
 	}
 
-	if f, err = s.ObjectsIndex.Search(o, field, operator, value, constrain); err != nil {
+	// transform search value before searching
+	s.prepare(field, &value)
+
+	if f, err = s.ObjectIndex.search(o, field, operator, value, constrain); err != nil {
 		// if the field is not indexed we have to go through all the collection
 		if errors.Is(err, ErrFieldNotIndexed) {
 			return db.searchAll(o, field, operator, value, constrain)
@@ -350,15 +452,11 @@ func (db *DB) search(o Object, field, operator string, value interface{}, constr
 }
 
 func (db *DB) flush(o Object) (err error) {
-	var s *Schema
 
-	if s, err = db.schema(o); err != nil {
-		return
-	}
-
-	if e := db.writeObject(o, db.oPath(s, o)); e != nil {
+	if e := db.writeObject(o); e != nil {
 		err = e
 	}
+
 	// we delete object from the list of objects to save
 	db.asyncw.delete(o)
 
@@ -366,45 +464,17 @@ func (db *DB) flush(o Object) (err error) {
 }
 
 func (db *DB) flushAll(of Object) (err error) {
-	var s *Schema
-
-	if s, err = db.schema(of); err != nil {
-		return
-	}
 
 	key := db.asyncw.key(of)
-
-	if _, ok := db.asyncw.m[key]; ok {
-		for _, o := range db.asyncw.m[key] {
-			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
-				err = e
-			}
-			// we delete object from the list of objects to save
-			db.asyncw.delete(o)
-		}
+	if om, ok := db.asyncw.m[key]; ok {
+		return om.flush(db)
 	}
 
 	return
 }
 
 func (db *DB) flushDB() (err error) {
-	for key := range db.asyncw.m {
-		var s *Schema
-		for _, o := range db.asyncw.m[key] {
-			// we get schema
-			if s == nil {
-				if s, err = db.schema(o); err != nil {
-					return
-				}
-			}
-			if e := db.writeObject(o, db.oPath(s, o)); e != nil {
-				err = e
-			}
-			// we delete object from the list of objects to write
-			db.asyncw.delete(o)
-		}
-	}
-	return
+	return db.asyncw.flush(db)
 }
 
 /***** Public Methods ******/
@@ -458,7 +528,7 @@ func (db *DB) Create(o Object, s Schema) (err error) {
 
 	case errors.Is(err, fs.ErrNotExist):
 		// we need to create a new schema
-		if err = s.Initialize(o); err != nil {
+		if err = s.initialize(db, o); err != nil {
 			return
 		}
 
@@ -495,8 +565,7 @@ func (db *DB) Get(in Object) (out Object, err error) {
 func (db *DB) GetByUUID(in Object, uuid string) (out Object, err error) {
 	db.RLock()
 	defer db.RUnlock()
-	in.Initialize(uuid)
-	return db.get(in)
+	return db.getByUUID(in, uuid)
 }
 
 // All returns all Objects in the DB
@@ -505,13 +574,13 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	defer db.RUnlock()
 
 	var o Object
-	var it *Iterator
+	var it *iterator
 
 	if it, err = db.Iterator(of); err != nil {
 		return
 	}
 
-	out = make([]Object, 0, it.Len())
+	out = make([]Object, 0, it.len())
 	for o, err = it.next(); err == nil && err != ErrEOI; o, err = it.next() {
 		out = append(out, o)
 	}
@@ -519,16 +588,17 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	if err == ErrEOI {
 		err = nil
 	}
+
 	return
 }
 
-func (db *DB) searchAll(o Object, field, operator string, value interface{}, constrain []*IndexedField) *Search {
-	var iter *Iterator
+func (db *DB) searchAll(o Object, field, operator string, value interface{}, constrain []*indexedField) *Search {
+	var iter *iterator
 	var err error
 	var s *Schema
-	var search *IndexedField
+	var search *indexedField
 
-	f := make([]*IndexedField, 0)
+	f := make([]*indexedField, 0)
 
 	if search, err = searchField(value); err != nil {
 		return &Search{db: db, err: err}
@@ -542,24 +612,24 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 	if constrain != nil {
 		uuids := make([]string, 0, len(constrain))
 		for _, c := range constrain {
-			uuids = append(uuids, s.ObjectsIndex.ObjectIds[c.ObjectId])
+			uuids = append(uuids, s.ObjectIndex.ObjectIds[c.ObjectId])
 		}
-		iter = &Iterator{db: db, i: 0, uuids: uuids, t: typeof(o)}
+		iter = newIterator(db, o, uuids)
 	} else if iter, err = db.Iterator(o); err != nil {
 		return &Search{db: db, err: err}
 	}
 
 	// we go through the iterator
 	fp := fieldPath(field)
-	searchType := search.ValueTypeString()
+	searchType := search.valueTypeString()
 
-	for obj, err := iter.Next(); err == nil && err != ErrEOI; obj, err = iter.Next() {
-		var test *IndexedField
+	for obj, err := iter.next(); err == nil && err != ErrEOI; obj, err = iter.next() {
+		var test *indexedField
 		var value interface{}
 		var ok bool
 		var index uint64
 
-		if index, ok = s.ObjectsIndex.uuids[obj.UUID()]; !ok {
+		if index, ok = s.ObjectIndex.uuids[obj.UUID()]; !ok {
 			panic("index corrupted")
 		}
 
@@ -567,17 +637,17 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 			return &Search{db: db, err: fmt.Errorf("%w %s", ErrUnkownField, field)}
 		}
 
-		if test, err = NewIndexedField(value, index); err != nil {
+		if test, err = newIndexedField(value, index); err != nil {
 			return &Search{db: db, err: err}
 		}
 
-		fieldType := test.ValueTypeString()
+		fieldType := test.valueTypeString()
 
 		if fieldType != searchType {
 			return &Search{db: db, err: fmt.Errorf("%w, cannot cast %T(%v) to %s", ErrCasting, search.Value, search.Value, fieldType)}
 		}
 
-		if test.Evaluate(operator, search) {
+		if test.evaluate(operator, search) {
 			f = append(f, test)
 		}
 	}
@@ -599,7 +669,7 @@ func (db *DB) Search(o Object, field, operator string, value interface{}) *Searc
 }
 
 // Iterator returns an Object Iterator
-func (db *DB) Iterator(of Object) (it *Iterator, err error) {
+func (db *DB) Iterator(of Object) (it *iterator, err error) {
 	db.RLock()
 	defer db.RUnlock()
 
@@ -610,9 +680,9 @@ func (db *DB) Iterator(of Object) (it *Iterator, err error) {
 		return
 	}
 
-	if s.ObjectsIndex != nil {
-		uuids = make([]string, 0, len(s.ObjectsIndex.uuids))
-		for uuid := range s.ObjectsIndex.uuids {
+	if s.ObjectIndex != nil {
+		uuids = make([]string, 0, len(s.ObjectIndex.uuids))
+		for uuid := range s.ObjectIndex.uuids {
 			uuids = append(uuids, uuid)
 		}
 	} else {
@@ -621,20 +691,18 @@ func (db *DB) Iterator(of Object) (it *Iterator, err error) {
 	}
 
 	// building up the iterator
-	it = &Iterator{db: db, i: 0, uuids: uuids, t: typeof(of)}
-
-	return
+	return newIterator(db, of, uuids), nil
 }
 
 // Count the number of Object in the database
 func (db *DB) Count(of Object) (n int, err error) {
-	var it *Iterator
+	var it *iterator
 
 	if it, err = db.Iterator(of); err != nil {
 		return
 	}
 
-	n = it.Len()
+	n = it.len()
 	return
 }
 
@@ -643,13 +711,12 @@ func (db *DB) Drop() (err error) {
 	db.Lock()
 	defer db.Unlock()
 
-	path := filepath.Join(db.root)
-	return os.RemoveAll(path)
+	return os.RemoveAll(db.root)
 }
 
 // DeleteAll deletes all Objects of the same type and commit changes
 func (db *DB) DeleteAll(of Object) (err error) {
-	var it *Iterator
+	var it *iterator
 	if it, err = db.Iterator(of); err != nil {
 		return
 	}
@@ -658,7 +725,7 @@ func (db *DB) DeleteAll(of Object) (err error) {
 
 // DeleteObjects deletes Objects from an Iterator and commit changes.
 // This primitive can be used for bulk deletions.
-func (db *DB) DeleteObjects(from *Iterator) (err error) {
+func (db *DB) DeleteObjects(from *iterator) (err error) {
 	db.Lock()
 	defer db.Unlock()
 
@@ -724,22 +791,44 @@ func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (err error) {
 
 // InsertOrUpdateMany inserts several objects into the DB and
 // commit schema after all insertions. It is faster than calling
-// InsertOrUpdate for every objects separately.
+// InsertOrUpdate for every objects separately. All objects must
+// be of the same type. If a validation is found in one of the
+// objects none of the objects is inserted.
 func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
+	var schema *Schema
 
+	if len(objects) == 0 {
+		return
+	}
+
+	if schema, err = db.schema(objects[0]); err != nil {
+		return
+	}
+
+	expType := stype(objects[0])
 	// we validate all the objects prior to insertion
 	for _, o := range objects {
-		// transform object prior to validation
+		otype := stype(o)
+
+		// testing if all objects in parameters are of the same type
+		if otype != expType {
+			return fmt.Errorf("%w expecting %s, got %s", ErrWrongObjectType, expType, otype)
+		}
+
+		// making transformations prior to validation
+		// Object transform
 		o.Transform()
+		// schema transformation superseeds Object transformation
+		schema.transform(o)
 		if err := o.Validate(); err != nil {
-			return ValidationErr(o, err)
+			return validationErr(o, err)
 		}
 	}
 
 	for _, o := range objects {
-		if e := db.insertOrUpdate(o, false); e != nil {
+		if e := db.insertOrUpdate(schema, o, false); e != nil {
 			err = e
 			break
 		}
@@ -761,14 +850,22 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 func (db *DB) InsertOrUpdate(o Object) (err error) {
 	db.Lock()
 	defer db.Unlock()
+	var schema *Schema
 
-	// transform object prior to validation
-	o.Transform()
-	if err := o.Validate(); err != nil {
-		return ValidationErr(o, err)
+	if schema, err = db.schema(o); err != nil {
+		return
 	}
 
-	return db.insertOrUpdate(o, true)
+	// making transformations prior to validation
+	// Object transform
+	o.Transform()
+	// schema transformation superseeds Object transformation
+	schema.transform(o)
+	if err := o.Validate(); err != nil {
+		return validationErr(o, err)
+	}
+
+	return db.insertOrUpdate(schema, o, true)
 }
 
 func (db *DB) commit(o Object) (err error) {
@@ -840,10 +937,7 @@ func (db *DB) FlushAll(of Object) (err error) {
 	return db.flushAll(of)
 }
 
-// FlushAllAndCommit flushes objects of type to disk and commit schema
-func (db *DB) FlushAllAndCommit(of Object) (last error) {
-	db.Lock()
-	defer db.Unlock()
+func (db *DB) flushAllAndCommit(of Object) (last error) {
 
 	if err := db.flushAll(of); err != nil {
 		last = err
@@ -854,6 +948,62 @@ func (db *DB) FlushAllAndCommit(of Object) (last error) {
 	}
 
 	return
+}
+
+// FlushAllAndCommit flushes objects of type to disk and commit schema
+func (db *DB) FlushAllAndCommit(of Object) (last error) {
+	db.Lock()
+	defer db.Unlock()
+
+	return db.flushAllAndCommit(of)
+}
+
+// Repair repairs database schema
+func (db *DB) Repair(of Object) (err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	var uuids map[string]bool
+	var s *Schema
+	var o Object
+
+	dir := db.oDir(of)
+
+	// we get schema
+	if s, err = db.schema(of); err != nil && !errors.Is(err, ErrIndexCorrupted) {
+		return
+	}
+
+	// we re-index missing objects in index
+	if uuids, err = uuidsFromDir(dir); err != nil {
+		return
+	}
+
+	// we re-index missing uuids
+	for uuid := range uuids {
+		// we don't re-index already indexed objects
+		if s.isUUIDIndexed(uuid) {
+			continue
+		}
+
+		if o, err = db.getByUUID(of, uuid); err != nil {
+			return
+		}
+
+		if err = s.index(o); err != nil {
+			return
+		}
+	}
+
+	// we de-index missing objects
+	for uuid := range s.ObjectIndex.uuids {
+		if !uuids[uuid] {
+			// if object is not on disk and is in index
+			s.unindexByUUID(uuid)
+		}
+	}
+
+	return nil
 }
 
 // Close closes gently the DB by flushing any pending async writes

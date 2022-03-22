@@ -3,7 +3,6 @@ package sod
 import (
 	"errors"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 )
 
 func TestSearchNoIndexObject(t *testing.T) {
-	os.RemoveAll(dbpath)
 	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
@@ -41,7 +39,6 @@ func TestSearchNoIndexObject(t *testing.T) {
 }
 
 func TestSearchIndexObject(t *testing.T) {
-	os.RemoveAll(dbpath)
 	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
@@ -71,7 +68,6 @@ func TestSearchIndexObject(t *testing.T) {
 }
 
 func TestSearchOr(t *testing.T) {
-	os.RemoveAll(dbpath)
 	db := createFreshTestDb(10000, DefaultSchema)
 	defer db.Close()
 
@@ -101,7 +97,6 @@ func TestSearchDeleteObject(t *testing.T) {
 
 	deln := 0
 	size := 10000
-	os.RemoveAll(dbpath)
 	db := createFreshTestDb(size, DefaultSchema)
 	defer db.Close()
 
@@ -110,7 +105,7 @@ func TestSearchDeleteObject(t *testing.T) {
 		t.FailNow()
 	}
 
-	for fn, fi := range s.ObjectsIndex.Fields {
+	for fn, fi := range s.ObjectIndex.Fields {
 		t.Logf("FieldIndex %s size: %d", fn, fi.Len())
 	}
 
@@ -127,11 +122,11 @@ func TestSearchDeleteObject(t *testing.T) {
 		}
 	}
 
-	if s.ObjectsIndex.Len() != size-deln {
-		t.Errorf("Expecting index length of %d got %d", size-deln, s.ObjectsIndex.Len())
+	if s.ObjectIndex.len() != size-deln {
+		t.Errorf("Expecting index length of %d got %d", size-deln, s.ObjectIndex.len())
 	}
 
-	for fn, fi := range s.ObjectsIndex.Fields {
+	for fn, fi := range s.ObjectIndex.Fields {
 		t.Logf("FieldIndex %s size after deletion: %d", fn, fi.Len())
 		if fi.Len() != size-deln {
 			t.Errorf("Expecting field index (%s) length of %d got %d", fn, size-deln, fi.Len())
@@ -178,6 +173,7 @@ func TestFieldPath(t *testing.T) {
 		},
 	}
 	s.In.Anon.G = "G"
+	ts := &testStruct{Nested: s}
 
 	i, ok := fieldByName(s, fieldPath("A"))
 	tt.Assert(ok)
@@ -191,7 +187,11 @@ func TestFieldPath(t *testing.T) {
 	tt.Assert(ok)
 	tt.Assert(i.(string) == "G")
 
-	i, ok = fieldByName(s, fieldPath(""))
+	_, ok = fieldByName(s, fieldPath(""))
 	tt.Assert(!ok)
+
+	i, ok = fieldByName(ts, fieldPath("Nested.A"))
+	tt.Assert(i.(int) == 41)
+	tt.Assert(ok)
 
 }

@@ -22,13 +22,13 @@ func IsNoObjectFound(err error) bool {
 type Search struct {
 	db      *DB
 	object  Object
-	fields  []*IndexedField
+	fields  []*indexedField
 	limit   uint64
 	reverse bool
 	err     error
 }
 
-func newSearch(db *DB, o Object, f []*IndexedField, err error) *Search {
+func newSearch(db *DB, o Object, f []*indexedField, err error) *Search {
 	return &Search{db: db, object: o, fields: f, limit: math.MaxUint, err: err}
 }
 
@@ -82,18 +82,18 @@ func (s *Search) Len() int {
 
 // Iterator returns an Iterator convenient to iterate over
 // the objects resulting from the search
-func (s *Search) Iterator() (it *Iterator, err error) {
+func (s *Search) Iterator() (it *iterator, err error) {
 	var sch *Schema
 
 	if sch, err = s.db.schema(s.object); err != nil {
 		return
 	}
 
-	it = &Iterator{db: s.db, t: typeof(s.object)}
-	it.uuids = make([]string, 0, len(s.fields))
+	// create a new iterator
+	it = newIterator(s.db, s.object, make([]string, 0, len(s.fields)))
 
 	for _, f := range s.fields {
-		it.uuids = append(it.uuids, sch.ObjectsIndex.ObjectIds[f.ObjectId])
+		it.uuids = append(it.uuids, sch.ObjectIndex.ObjectIds[f.ObjectId])
 	}
 
 	return
@@ -101,7 +101,7 @@ func (s *Search) Iterator() (it *Iterator, err error) {
 
 // Delete deletes the objects found by the search
 func (s *Search) Delete() (err error) {
-	var it *Iterator
+	var it *iterator
 
 	if it, err = s.Iterator(); err != nil {
 		return
@@ -120,28 +120,6 @@ func (s *Search) Reverse() *Search {
 func (s *Search) Limit(limit uint64) *Search {
 	s.limit = limit
 	return s
-}
-
-func (s *Search) one() (o Object, err error) {
-	var sr []Object
-
-	if s.err != nil {
-		err = s.err
-		return
-	}
-
-	if s.Len() == 0 {
-		err = ErrNoObjectFound
-		return
-	}
-
-	// prevent collecting all results and using only one
-	s.limit = 1
-	if sr, err = s.collect(); err != nil {
-		return
-	}
-	o = sr[0]
-	return
 }
 
 // One returns the first result found calling Collect function.
@@ -193,7 +171,7 @@ func (s *Search) Assign(target interface{}) (err error) {
 		return err
 	} else {
 		v := reflect.ValueOf(target)
-		if v.Kind() == reflect.Ptr {
+		if v.Kind() == reflect.Ptr && !v.IsZero() {
 			v = v.Elem()
 			t := reflect.TypeOf(target)
 			if v.Kind() == reflect.Slice {
@@ -215,36 +193,6 @@ func (s *Search) Assign(target interface{}) (err error) {
 	}
 }
 
-func (s *Search) collect() (out []Object, err error) {
-	var it *Iterator
-	var o Object
-
-	if s.Err() != nil {
-		return nil, s.Err()
-	}
-
-	if it, err = s.Iterator(); err != nil {
-		return
-	}
-
-	if s.reverse {
-		it.Reverse()
-	}
-
-	out = make([]Object, 0, it.Len())
-	for o, err = it.next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.next() {
-		out = append(out, o)
-		s.limit--
-	}
-
-	// normal end of iterator
-	if err == ErrEOI {
-		err = nil
-	}
-
-	return
-}
-
 // Collect all the objects resulting from the search.
 // If a search has been made on an indexed field, results
 // will be in descending order by default. If you want to change
@@ -261,4 +209,58 @@ func (s *Search) Collect() (out []Object, err error) {
 // Err return any error encountered while searching
 func (s *Search) Err() error {
 	return s.err
+}
+
+/************** Private Methods ******************/
+
+func (s *Search) one() (o Object, err error) {
+	var sr []Object
+
+	if s.err != nil {
+		err = s.err
+		return
+	}
+
+	if s.Len() == 0 {
+		err = ErrNoObjectFound
+		return
+	}
+
+	// prevent collecting all results and using only one
+	s.limit = 1
+	if sr, err = s.collect(); err != nil {
+		return
+	}
+	o = sr[0]
+	return
+}
+
+func (s *Search) collect() (out []Object, err error) {
+	var it *iterator
+	var o Object
+
+	if s.Err() != nil {
+		return nil, s.Err()
+	}
+
+	if it, err = s.Iterator(); err != nil {
+		return
+	}
+
+	if s.reverse {
+		it.reversed()
+	}
+
+	out = make([]Object, 0, it.len())
+	for o, err = it.next(); err == nil && err != ErrEOI && s.limit > 0; o, err = it.next() {
+		out = append(out, o)
+		s.limit--
+	}
+
+	// normal end of iterator
+	if err == ErrEOI {
+		err = nil
+	}
+
+	return
 }

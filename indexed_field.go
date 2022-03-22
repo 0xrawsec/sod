@@ -12,7 +12,7 @@ var (
 	ErrUnknownKeyType = errors.New("unknown key type")
 )
 
-type IndexedField struct {
+type indexedField struct {
 	// the value we want to index
 	Value interface{}
 	// the ObjectId of the object in the list of object
@@ -20,11 +20,30 @@ type IndexedField struct {
 	ObjectId uint64
 }
 
-func searchField(value interface{}) (k *IndexedField, err error) {
-	return NewIndexedField(value, 0)
+func (f *indexedField) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]interface{}{f.Value, f.ObjectId})
 }
 
-func NewIndexedField(value interface{}, objid uint64) (*IndexedField, error) {
+func (f *indexedField) UnmarshalJSON(data []byte) error {
+	var tuple []interface{}
+	if err := json.Unmarshal(data, &tuple); err != nil {
+		return err
+	}
+	f.Value = tuple[0]
+	// Json unmarshals integer to interface{} as float64
+	f.ObjectId = uint64(tuple[1].(float64))
+	return nil
+}
+
+func (f *indexedField) String() string {
+	return fmt.Sprintf("(%v, %d)", f.Value, f.ObjectId)
+}
+
+func searchField(value interface{}) (k *indexedField, err error) {
+	return newIndexedField(value, 0)
+}
+
+func newIndexedField(value interface{}, objid uint64) (*indexedField, error) {
 	var err error
 
 	switch k := value.(type) {
@@ -53,10 +72,10 @@ func NewIndexedField(value interface{}, objid uint64) (*IndexedField, error) {
 	default:
 		err = fmt.Errorf("%w %T", ErrUnknownKeyType, value)
 	}
-	return &IndexedField{value, objid}, err
+	return &indexedField{value, objid}, err
 }
 
-func (f *IndexedField) ValueTypeFromString(t string) {
+func (f *indexedField) valueTypeFromString(t string) {
 	// we cast everything to float64 because json unmarshal interface{}
 	// to float64 and that is a current limitation of the indexing
 	switch t {
@@ -72,7 +91,7 @@ func (f *IndexedField) ValueTypeFromString(t string) {
 	}
 }
 
-func (f *IndexedField) ValueTypeString() string {
+func (f *indexedField) valueTypeString() string {
 	switch f.Value.(type) {
 	case float64:
 		return "float64"
@@ -87,26 +106,7 @@ func (f *IndexedField) ValueTypeString() string {
 	}
 }
 
-func (f *IndexedField) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]interface{}{f.Value, f.ObjectId})
-}
-
-func (f *IndexedField) UnmarshalJSON(data []byte) error {
-	var tuple []interface{}
-	if err := json.Unmarshal(data, &tuple); err != nil {
-		return err
-	}
-	f.Value = tuple[0]
-	// Json unmarshals integer to interface{} as float64
-	f.ObjectId = uint64(tuple[1].(float64))
-	return nil
-}
-
-func (f *IndexedField) String() string {
-	return fmt.Sprintf("(%v, %d)", f.Value, f.ObjectId)
-}
-
-func (f *IndexedField) Equal(other *IndexedField) bool {
+func (f *indexedField) equal(other *indexedField) bool {
 	switch kt := f.Value.(type) {
 	case int64:
 		return kt == other.Value.(int64)
@@ -121,18 +121,18 @@ func (f *IndexedField) Equal(other *IndexedField) bool {
 	}
 }
 
-func (f *IndexedField) DeepEqual(other *IndexedField) bool {
+func (f *indexedField) deepEqual(other *indexedField) bool {
 	if f.ObjectId != other.ObjectId {
 		return false
 	}
-	return f.Equal(other)
+	return f.equal(other)
 }
 
-func (f *IndexedField) Greater(other *IndexedField) bool {
-	return !f.Less(other) && !f.Equal(other)
+func (f *indexedField) greater(other *indexedField) bool {
+	return !f.less(other) && !f.equal(other)
 }
 
-func (f *IndexedField) Less(other *IndexedField) bool {
+func (f *indexedField) less(other *indexedField) bool {
 	switch kt := f.Value.(type) {
 	case int64:
 		return kt < other.Value.(int64)
@@ -147,20 +147,20 @@ func (f *IndexedField) Less(other *IndexedField) bool {
 	}
 }
 
-func (f *IndexedField) Evaluate(operator string, other *IndexedField) bool {
+func (f *indexedField) evaluate(operator string, other *indexedField) bool {
 	switch operator {
 	case "!=":
-		return !f.Equal(other)
+		return !f.equal(other)
 	case "=":
-		return f.Equal(other)
+		return f.equal(other)
 	case ">":
-		return f.Greater(other)
+		return f.greater(other)
 	case ">=":
-		return f.Greater(other) || f.Equal(other)
+		return f.greater(other) || f.equal(other)
 	case "<":
-		return f.Less(other)
+		return f.less(other)
 	case "<=":
-		return f.Less(other) || f.Equal(other)
+		return f.less(other) || f.equal(other)
 	case "~=":
 		var err error
 		var rex *regexp.Regexp

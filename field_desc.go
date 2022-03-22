@@ -7,90 +7,160 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
-type Constraints struct {
-	Unique bool `json:"unique"`
-}
+var (
+	timeType = reflect.TypeOf(time.Time{})
+)
 
 type FieldDescriptor struct {
-	Path       string      `json:"-"`
-	Type       string      `json:"-"`
-	Index      bool        `json:"-"`
-	Constraint Constraints `json:"constraint"`
+	Path        string      `json:"path"`
+	Type        string      `json:"type"`
+	Constraints Constraints `json:"constraints"`
 }
 
-func FieldDescriptors(o Object) (fds []FieldDescriptor) {
-	fds = make([]FieldDescriptor, 0)
-	recFieldDescriptors(reflect.ValueOf(o), "", &fds)
+func (d *FieldDescriptor) Transform(o interface{}) {
+
+	switch i := o.(type) {
+	case Object:
+		d.Constraints.TransformField(d.Path, i)
+	default:
+		d.Constraints.Transform(i)
+	}
+}
+
+func (d FieldDescriptor) String() string {
+	return fmt.Sprintf("path=%s type=%s constraints=(%s)", d.Path, d.Type, d.Constraints)
+}
+
+type FieldDescMap map[string]FieldDescriptor
+
+func FieldDescriptors(from Object) (desc FieldDescMap) {
+	desc = make(FieldDescMap)
+	sdesc := make([]FieldDescriptor, 0)
+	recFieldDescriptors(reflect.ValueOf(from), "", &sdesc)
+	for _, fd := range sdesc {
+		desc[fd.Path] = fd
+	}
 	return
 }
 
-func ObjectFingerprint(o Object) (fp string, err error) {
+func (m FieldDescMap) Fingerprint() (f string, err error) {
 	var b []byte
 
 	h := md5.New()
 
-	if b, err = json.Marshal(FieldDescriptors(o)); err != nil {
+	if b, err = json.Marshal(m); err != nil {
 		return
 	}
 
 	h.Write(b)
-	fp = hex.EncodeToString(h.Sum(nil))
+	f = hex.EncodeToString(h.Sum(nil))
 	return
+}
+
+func (m FieldDescMap) Transformers() (t []FieldDescriptor) {
+	t = make([]FieldDescriptor, 0)
+	for _, fd := range m {
+		if fd.Constraints.Transformer() {
+			t = append(t, fd)
+		}
+	}
+	return
+}
+
+func (m FieldDescMap) GetDescriptor(fpath string) (d FieldDescriptor, ok bool) {
+	d, ok = m[fpath]
+	return
+}
+
+func (m FieldDescMap) Constraint(fpath string, c Constraints) (err error) {
+	if d, ok := m[fpath]; ok {
+		d.Constraints = c
+		m[fpath] = d
+		return nil
+	}
+	return fmt.Errorf("%w %s", ErrUnkownField, fpath)
+}
+
+func fdFromType(path string, tag string, fieldType reflect.Type) FieldDescriptor {
+	fd := FieldDescriptor{
+		Path: path,
+		Type: fieldType.String(),
+	}
+
+	for _, tv := range strings.Split(tag, ",") {
+		switch tv {
+		case "index":
+			fd.Constraints.Index = true
+		case "unique":
+			fd.Constraints.Index = true
+			fd.Constraints.Unique = true
+		case "lower":
+			fd.Constraints.Lower = true
+		case "upper":
+			fd.Constraints.Upper = true
+		}
+	}
+
+	return fd
+
+}
+
+func joinFieldPath(path, fieldName string) string {
+	if path == "" {
+		return fieldName
+	}
+	return strings.Join([]string{path, fieldName}, ".")
+
 }
 
 func recFieldDescriptors(v reflect.Value, path string, fds *[]FieldDescriptor) {
 	typ := v.Type()
 
-	if v.Kind() == reflect.Ptr {
-		recFieldDescriptors(v.Elem(), path, fds)
-		return
-	}
+	switch v.Kind() {
+	default:
+		*fds = append(*fds, fdFromType(path, "", typ))
 
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Field(i)
-		fieldType := typ.Field(i)
-
-		if field.Kind() == reflect.Ptr {
-			// create a new field
-			field = reflect.New(fieldType.Type.Elem()).Elem()
-			nextPath := fieldType.Name
-			if path != "" {
-				nextPath = strings.Join([]string{path, fieldType.Name}, ".")
-			}
-			recFieldDescriptors(field, nextPath, fds)
-			continue
+	case reflect.Ptr:
+		if v.Elem().Kind() == reflect.Struct {
+			recFieldDescriptors(v.Elem(), path, fds)
+		} else {
+			*fds = append(*fds, fdFromType(path, "", typ))
 		}
 
-		if field.Kind() == reflect.Struct {
-			nextPath := fieldType.Name
-			if path != "" {
-				nextPath = strings.Join([]string{path, fieldType.Name}, ".")
-			}
-			recFieldDescriptors(field, nextPath, fds)
-			continue
-		}
+	case reflect.Struct:
 
-		if tag, ok := fieldType.Tag.Lookup("sod"); ok {
-			fdPath := fieldType.Name
+		for i := 0; i < v.NumField(); i++ {
+			fieldValue := v.Field(i)
+			structField := typ.Field(i)
+
+			switch fieldValue.Kind() {
+			case reflect.Ptr:
+				// create a new field
+				fieldValue = reflect.New(structField.Type.Elem())
+				recFieldDescriptors(fieldValue, joinFieldPath(path, structField.Name), fds)
+				continue
+			case reflect.Struct:
+				// don't treat struct time.Time as a struct
+				if !fieldValue.Type().AssignableTo(timeType) {
+					recFieldDescriptors(fieldValue, joinFieldPath(path, structField.Name), fds)
+					continue
+				}
+			}
+
+			// process struct field
+			tag, _ := structField.Tag.Lookup("sod")
+			fdPath := structField.Name
+			if !structField.IsExported() {
+				continue
+			}
 			if path != "" {
 				fdPath = fmt.Sprintf("%s.%s", path, fdPath)
 			}
-			fd := FieldDescriptor{
-				Path: fdPath,
-				Type: fieldType.Type.Name(),
-			}
-			for _, tv := range strings.Split(tag, ",") {
-				switch tv {
-				case "index":
-					fd.Index = true
-				case "unique":
-					fd.Index = true
-					fd.Constraint.Unique = true
-				}
-			}
-			*fds = append(*fds, fd)
+
+			*fds = append(*fds, fdFromType(fdPath, tag, fieldValue.Type()))
 		}
 	}
 }

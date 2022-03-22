@@ -2,8 +2,11 @@ package sod
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -46,19 +49,6 @@ func ToObjectChan(slice interface{}) (objs chan Object) {
 	return
 }
 
-func UnmarshalJsonFile(path string, i interface{}) (err error) {
-	var data []byte
-
-	if data, err = ioutil.ReadFile(path); err != nil {
-		return
-	}
-	if err = json.Unmarshal(data, i); err != nil {
-		return
-	}
-
-	return
-}
-
 func uuidOrPanic() string {
 	if u, err := uuid.NewRandom(); err != nil {
 		panic(err)
@@ -68,7 +58,7 @@ func uuidOrPanic() string {
 
 }
 
-func CamelToSnake(camel string) string {
+func camelToSnake(camel string) string {
 	var snake bytes.Buffer
 	var prevLower bool
 	var cur, next rune
@@ -112,7 +102,6 @@ func CamelToSnake(camel string) string {
 }
 
 func stype(i interface{}) string {
-	//return typeof(i).Name()
 	return typeof(i).String()
 }
 
@@ -124,14 +113,32 @@ func typeof(i interface{}) reflect.Type {
 	}
 }
 
-func filename(o Object, s *Schema) string {
-	return fmt.Sprintf("%s%s", o.UUID(), s.Extension)
-}
-
 func uuidExt(name string) (uuid, ext string) {
 	s := strings.SplitN(name, ".", 2)
 	uuid = s[0]
 	ext = fmt.Sprintf(".%s", s[1])
+	return
+}
+
+func uuidsFromDir(dir string) (uuids map[string]bool, err error) {
+	var entries []os.DirEntry
+
+	// we read directory where objects are stored
+	if entries, err = os.ReadDir(dir); err != nil {
+		return
+	}
+
+	// we re-index missing objects in index
+	uuids = make(map[string]bool)
+	for _, entry := range entries {
+		uuid, _ := uuidExt(entry.Name())
+
+		if !uuidRegexp.MatchString(uuid) {
+			continue
+		}
+		uuids[uuid] = true
+	}
+
 	return
 }
 
@@ -141,6 +148,14 @@ func isFileAndExist(path string) bool {
 		return false
 	}
 	return stat.Mode().IsRegular() && err == nil
+}
+
+func isDirAndExist(path string) bool {
+	stat, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return stat.Mode().IsDir() && err == nil
 }
 
 func dbgLock(lock string) {
@@ -154,4 +169,62 @@ func dbgLock(lock string) {
 
 func fieldPath(path string) []string {
 	return strings.Split(path, ".")
+}
+
+func unmarshalJsonFile(path string, i interface{}) (err error) {
+	var data []byte
+	var in *os.File
+	var r io.Reader
+
+	if in, err = os.Open(path); err != nil {
+		return
+	}
+	defer in.Close()
+
+	r = in
+	if strings.HasSuffix(path, compressedExtension) {
+		if r, err = gzip.NewReader(in); err != nil {
+			return
+		}
+	}
+
+	if data, err = ioutil.ReadAll(r); err != nil {
+		return
+	}
+
+	if err = json.Unmarshal(data, i); err != nil {
+		return
+	}
+
+	return
+}
+
+func writeReader(path string, r io.Reader, perms fs.FileMode, compress bool) (err error) {
+	var out *os.File
+	var w io.WriteCloser
+
+	if compress && !strings.HasSuffix(path, compressedExtension) {
+		path = fmt.Sprintf("%s%s", path, compressedExtension)
+	}
+
+	if out, err = os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, perms); err != nil {
+		return
+	}
+	defer out.Close()
+
+	// default value for writer
+	w = out
+	if compress {
+		if w, err = gzip.NewWriterLevel(out, gzip.BestSpeed); err != nil {
+			return
+		}
+		defer w.Close()
+	}
+
+	if _, err = io.Copy(w, r); err != nil {
+		return
+	}
+
+	return w.Close()
+
 }

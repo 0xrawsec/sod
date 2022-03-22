@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,8 +17,12 @@ import (
 )
 
 const (
-	dbpath = "data/database"
+	dbroot = "data/"
 )
+
+func init() {
+	os.RemoveAll(dbroot)
+}
 
 type testStruct struct {
 	Item
@@ -35,7 +41,10 @@ type testStruct struct {
 	M      time.Time `sod:"index"`
 	N      uint
 	O      string
-	Nested nestedStruct
+	Upper  string `sod:"upper,index"`
+	Lower  string `sod:"lower"`
+	Nested *nestedStruct
+	Ptr    *int
 }
 
 type testStructUnique struct {
@@ -60,21 +69,25 @@ func genTestStructs(n int) chan Object {
 				c = "bar"
 				o = "foo"
 			}
+			k := 42
 			ts := &testStruct{
-				A: randMod(42),
-				B: randMod(42),
-				C: c,
-				D: int16(randMod(42)),
-				E: int32(randMod(42)),
-				F: int64(randMod(42)),
-				G: uint8(randMod(42)),
-				H: uint16(randMod(42)),
-				I: uint32(randMod(42)),
-				K: float64(randMod(42)),
-				L: int8(randMod(42)),
-				M: time.Now(),
-				N: uint(randMod(42)),
-				O: o,
+				A:     randMod(42),
+				B:     randMod(42),
+				C:     c,
+				D:     int16(randMod(42)),
+				E:     int32(randMod(42)),
+				F:     int64(randMod(42)),
+				G:     uint8(randMod(42)),
+				H:     uint16(randMod(42)),
+				I:     uint32(randMod(42)),
+				K:     float64(randMod(42)),
+				L:     int8(randMod(42)),
+				M:     time.Now(),
+				N:     uint(randMod(42)),
+				O:     o,
+				Upper: "upper",
+				Lower: "lower",
+				Ptr:   &k,
 			}
 			co <- ts
 		}
@@ -82,17 +95,13 @@ func genTestStructs(n int) chan Object {
 	return co
 }
 
-func cleanup() {
-	if err := os.RemoveAll(dbpath); err != nil {
-		panic(err)
-	}
+func randDBPath() string {
+	return fmt.Sprintf("data/database-%d", rand.Uint64())
 }
 
 func createFreshTestDb(n int, s Schema) *DB {
-	cleanup()
-
 	//s.AsyncWrites = &Async{Enable: true, Timeout: 5}
-	db := Open(dbpath)
+	db := Open(randDBPath())
 	if err := db.Create(&testStruct{}, s); err != nil {
 		panic(err)
 	}
@@ -106,7 +115,7 @@ func closeAndReOpen(db *DB) *DB {
 	if err := db.Close(); err != nil {
 		panic(err)
 	}
-	return Open(dbpath)
+	return Open(db.root)
 }
 
 func controlDBSize(t *testing.T, db *DB, o Object, n int) {
@@ -133,13 +142,13 @@ func assert(test bool, message string) {
 }
 
 func TestSnakeCase(t *testing.T) {
-	assert(CamelToSnake("TestTest") == "test_test", "Unexpected snake case")
-	assert(CamelToSnake("TestTEST") == "test_test", "Unexpected snake case")
-	assert(CamelToSnake("OneTWOThree") == "one_two_three", "Unexpected snake case")
-	assert(CamelToSnake("One2Three") == "one_2_three", "Unexpected snake case")
-	assert(CamelToSnake("One23") == "one_23", "Unexpected snake case")
-	assert(CamelToSnake("1Step2Step") == "1_step_2_step", "Unexpected snake case")
-	assert(CamelToSnake("123") == "123", "Unexpected snake case")
+	assert(camelToSnake("TestTest") == "test_test", "Unexpected snake case")
+	assert(camelToSnake("TestTEST") == "test_test", "Unexpected snake case")
+	assert(camelToSnake("OneTWOThree") == "one_two_three", "Unexpected snake case")
+	assert(camelToSnake("One2Three") == "one_2_three", "Unexpected snake case")
+	assert(camelToSnake("One23") == "one_23", "Unexpected snake case")
+	assert(camelToSnake("1Step2Step") == "1_step_2_step", "Unexpected snake case")
+	assert(camelToSnake("123") == "123", "Unexpected snake case")
 }
 
 func TestTypeof(t *testing.T) {
@@ -149,8 +158,8 @@ func TestTypeof(t *testing.T) {
 }
 
 func TestSimpleDb(t *testing.T) {
-	os.RemoveAll(dbpath)
-	db := Open(dbpath)
+	t.Parallel()
+	db := createFreshTestDb(0, DefaultSchema)
 	defer controlDB(t, db)
 
 	tt := toast.FromT(t)
@@ -158,7 +167,7 @@ func TestSimpleDb(t *testing.T) {
 
 	t1 := testStruct{A: 1, B: 2, C: "Test"}
 	tt.CheckErr(db.InsertOrUpdate(&t1))
-	t.Log(t1)
+	t.Log(&t1)
 
 	ts := testStruct{}
 
@@ -174,6 +183,8 @@ func TestSimpleDb(t *testing.T) {
 }
 
 func TestGetAll(t *testing.T) {
+	t.Parallel()
+	tt := toast.FromT(t)
 	count := 100000
 	start := time.Now()
 	db := createFreshTestDb(count, DefaultSchema)
@@ -182,17 +193,14 @@ func TestGetAll(t *testing.T) {
 	defer controlDB(t, db)
 
 	start = time.Now()
-	if s, err := db.All(&testStruct{}); err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("Time to retrieve: %s", time.Since(start))
-		if len(s) != count {
-			t.Errorf("Expecting %d items, got %d", count, len(s))
-		}
-		if n, err := db.Count(&testStruct{}); n != count {
-			t.Errorf("Expecting %d items, got %d: %s", count, n, err)
-		}
-	}
+	s, err := db.All(&testStruct{})
+	tt.CheckErr(err)
+	t.Logf("Time to retrieve: %s", time.Since(start))
+	tt.Assert(len(s) == count)
+
+	n, err := db.Count(&testStruct{})
+	tt.CheckErr(err)
+	tt.Assert(n == count)
 }
 
 func corruptFile(path string) {
@@ -216,6 +224,7 @@ func corruptFile(path string) {
 }
 
 func TestCorruptedFiles(t *testing.T) {
+	t.Parallel()
 	count := 100
 	db := createFreshTestDb(count, DefaultSchema)
 	defer controlDB(t, db)
@@ -243,6 +252,7 @@ func TestCorruptedFiles(t *testing.T) {
 }
 
 func TestDrop(t *testing.T) {
+	t.Parallel()
 	n := 20
 	deln := 10
 	db := createFreshTestDb(n, DefaultSchema)
@@ -289,7 +299,7 @@ func TestDrop(t *testing.T) {
 			t.Error(err)
 		}
 
-		if _, err := os.Stat(dbpath); err == nil {
+		if _, err := os.Stat(db.root); err == nil {
 			t.Errorf("Database must have been deleted")
 		}
 
@@ -298,12 +308,13 @@ func TestDrop(t *testing.T) {
 func TestSchema(t *testing.T) {
 	var err error
 
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
 	db.Close()
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	// first call should unmarshall schema from disk
 	if _, err = db.Schema(&testStruct{}); err != nil {
 		t.Error(err)
@@ -319,22 +330,19 @@ func TestCloseAndReopen(t *testing.T) {
 	var err error
 	var s *Schema
 
+	t.Parallel()
+	tt := toast.FromT(t)
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
-	defer controlDB(t, db)
 
-	if err := db.Close(); err != nil {
-		t.Error(err)
-	}
+	tt.CheckErr(db.Close())
 
-	db = Open(dbpath)
-	defer controlDB(t, db)
-	defer db.Close()
+	db = Open(db.root)
+	defer tt.CheckErr(db.Control())
+	defer tt.CheckErr(db.Close())
 
-	if s, err = db.Schema(&testStruct{}); err != nil {
-		t.Error(err)
-		t.FailNow()
-	}
+	s, err = db.Schema(&testStruct{})
+	tt.CheckErr(err)
 
 	// we insert some more data
 	for i := 0; i < size; i++ {
@@ -342,72 +350,71 @@ func TestCloseAndReopen(t *testing.T) {
 		if rand.Int()%2 == 0 {
 			c = "bar"
 		}
-		if err = db.InsertOrUpdate(&testStruct{A: rand.Int() % 42, B: rand.Int() % 42, C: c}); err != nil {
-			panic(err)
-		}
+		tt.CheckErr(db.InsertOrUpdate(&testStruct{A: rand.Int() % 42, B: rand.Int() % 42, C: c}))
 	}
 
-	t.Logf("Index size: %d", s.ObjectsIndex.Len())
+	t.Logf("Index size: %d", s.ObjectIndex.len())
 
-	if c, err := db.Search(&testStruct{}, "A", "<", 10).Collect(); err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("Search result len: %d", len(c))
-		for _, o := range c {
-			ts := o.(*testStruct)
-			if ts.A >= 10 {
-				t.Error("Wrong value for A")
-			}
-		}
+	var res []*testStruct
+	tt.CheckErr(db.Search(&testStruct{}, "A", "<", 10).Assign(&res))
+	t.Logf("Search result len: %d", len(res))
+	for _, ts := range res {
+		tt.Assert(ts.A < 10)
 	}
 }
-func TestUpdateObject(t *testing.T) {
 
+func TestUpdateObject(t *testing.T) {
+	var out []*testStruct
+
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
 	defer db.Close()
 
-	if s, err := db.All(&testStruct{}); err != nil {
-		t.Error(err)
-	} else {
-		for _, o := range s {
-			ts := o.(*testStruct)
-			ts.A = 42
-			ts.B = 4242
-			ts.C = "foobar"
-			if err = db.InsertOrUpdate(ts); err != nil {
-				t.Error(err)
-			}
-		}
+	tt := toast.FromT(t)
+
+	s, err := db.All(&testStruct{})
+	tt.CheckErr(err)
+
+	for _, o := range s {
+		ts := o.(*testStruct)
+		ts.A = 42
+		ts.B = 4242
+		ts.C = "foobar"
+		tt.CheckErr(db.InsertOrUpdate(ts))
 	}
 
-	if c, err := db.Search(&testStruct{}, "A", "=", 42).And("B", "=", 4242).And("C", "=", "foobar").Collect(); err != nil {
-		t.Error(err)
-	} else {
-		if len(c) != size {
-			t.Errorf("Expecting %d results got %d", size, len(c))
-		}
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).And("B", "=", 4242).And("C", "=", "foobar").Assign(&out))
+	tt.Assert(len(out) == size)
+
+	for _, ts := range out {
+		ts.C = "foofoo"
+		tt.CheckErr(db.InsertOrUpdate(ts))
 	}
 
-	if s, err := db.Schema(&testStruct{}); err != nil {
-		t.Error(err)
-	} else {
-		if err = s.ObjectsIndex.Control(); err != nil {
-			t.Error(err)
-		}
-	}
+	// we should not find any struct with C=foobar because we just change them
+	tt.CheckErr(db.Search(&testStruct{}, "C", "=", "foobar").Assign(&out))
+	tt.Assert(len(out) == 0)
 
+	// all elements should have C=foofoo
+	tt.CheckErr(db.Search(&testStruct{}, "C", "=", "foofoo").Assign(&out))
+	tt.Assert(len(out) == size)
+
+	schema, err := db.Schema(&testStruct{})
+	tt.CheckErr(err)
+	tt.CheckErr(schema.control())
 }
 
 func TestIndexAllTypes(t *testing.T) {
 
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
 	db.Close()
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	defer db.Close()
 
 	if sr, err := db.Search(&testStruct{}, "A", "<", 42).
@@ -436,12 +443,13 @@ func TestRegexSearch(t *testing.T) {
 	var err error
 	var eqOnC, rexOnO []Object
 
+	t.Parallel()
 	size := 1000
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
 	db.Close()
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	defer db.Close()
 
 	if eqOnC, err = db.Search(&testStruct{}, "C", "=", "foo").
@@ -473,6 +481,7 @@ func TestRegexSearch(t *testing.T) {
 }
 
 func TestSearchOrder(t *testing.T) {
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
@@ -523,6 +532,7 @@ func TestSearchOrder(t *testing.T) {
 }
 
 func TestSearchLimit(t *testing.T) {
+	t.Parallel()
 	size := 100
 	limit := uint64(10)
 	db := createFreshTestDb(size, DefaultSchema)
@@ -541,6 +551,7 @@ func TestSearchLimit(t *testing.T) {
 
 func TestSearchError(t *testing.T) {
 
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
@@ -551,6 +562,7 @@ func TestSearchError(t *testing.T) {
 }
 
 func TestUnknownObject(t *testing.T) {
+	t.Parallel()
 	size := 100
 	db := createFreshTestDb(size, DefaultSchema)
 	defer controlDB(t, db)
@@ -578,6 +590,7 @@ func TestUnknownObject(t *testing.T) {
 
 func TestDBBulkDeletion(t *testing.T) {
 	// testing bulk object deletion
+	t.Parallel()
 	size := 10000
 	ndel := 0
 	db := createFreshTestDb(size, DefaultSchema)
@@ -600,7 +613,7 @@ func TestDBBulkDeletion(t *testing.T) {
 		}
 	}
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	// controlling size after re-opening the DB
 	if n, err := db.Count(&testStruct{}); err != nil {
 		t.Error(err)
@@ -611,39 +624,27 @@ func TestDBBulkDeletion(t *testing.T) {
 
 func TestUniqueObject(t *testing.T) {
 	var uninit *testStructUnique
+	t.Parallel()
 
-	cleanup()
+	tt := toast.FromT(t)
+	db := createFreshTestDb(0, DefaultSchema)
 
-	db := Open(dbpath)
-	defer controlDB(t, db)
-
-	db.Create(&testStructUnique{}, DefaultSchema)
-
-	db.InsertOrUpdate(&testStructUnique{A: 42, B: 43, C: "foo"})
+	tt.CheckErr(db.Create(&testStructUnique{}, DefaultSchema))
+	tt.CheckErr(db.InsertOrUpdate(&testStructUnique{A: 42, B: 43, C: "foo"}))
 
 	n := 0
 	for i := 0; i < 1000; i++ {
 		if rand.Int()%2 == 0 {
-			if err := db.InsertOrUpdate(&testStructUnique{A: 42}); !IsUnique(err) {
-				t.Error("Must have raised uniqueness error")
-			}
-			if err := db.InsertOrUpdate(&testStructUnique{B: 43}); !IsUnique(err) {
-				t.Error("Must have raised uniqueness error")
-			}
-			if err := db.InsertOrUpdate(&testStructUnique{C: "foo"}); !IsUnique(err) {
-				t.Error("Must have raised uniqueness error")
-			}
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrFieldUnique)
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{B: 43}), ErrFieldUnique)
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{C: "foo"}), ErrFieldUnique)
 		} else {
 			ts := testStructUnique{A: rand.Int(), B: rand.Int31()}
 			ts.C = fmt.Sprintf("bar%d%d", ts.A, ts.B)
 			if ts.A != 42 && ts.B != 43 {
-				if err := db.InsertOrUpdate(&ts); err != nil {
-					t.Error(err)
-				}
+				tt.CheckErr(db.InsertOrUpdate(&ts))
 				// reinserting same object should work
-				if err := db.InsertOrUpdate(&ts); err != nil {
-					t.Error(err)
-				}
+				tt.CheckErr(db.InsertOrUpdate(&ts))
 				n++
 			}
 		}
@@ -655,70 +656,51 @@ func TestUniqueObject(t *testing.T) {
 	}
 
 	// reopening
-	db = Open(dbpath)
+	db = Open(db.root)
 	// test inserting after re-opening
-	if err := db.InsertOrUpdate(&testStructUnique{A: 42}); !IsUnique(err) {
-		t.Error("Must have raised uniqueness error")
-	}
+	tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrFieldUnique)
+
+	tt.ShouldPanic(func() { db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(nil) })
+	tt.CheckErr(db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&uninit))
+	tt.Assert(uninit.A == 42)
 
 	ts := &testStructUnique{}
-	shouldPanic(t, func() { db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(uninit) })
-
-	if err := db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&ts); err != nil {
-		t.Error(err)
-	} else {
-		if ts.A != 42 || ts.B != 43 || ts.C != "foo" {
-			t.Error("Failed to assign object")
-		}
-	}
-
-	if o, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("Found object, deleting it: %v", o)
-		if err = db.Delete(o); err != nil {
-			t.Error(err)
-		}
-	}
+	tt.CheckErr(db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&ts))
+	tt.Assert(ts.A == 42 && ts.B == 43 && ts.C == "foo")
+	// we delete object
+	tt.CheckErr(db.Delete(ts))
 
 	// closing DB
-	if err := db.Close(); err != nil {
-		t.Error(err)
-	}
+	tt.CheckErr(db.Close())
 
 	// reopening
 	t.Logf("Reopening DB")
-	db = Open(dbpath)
+	db = Open(db.root)
 
-	if _, err := db.Search(&testStructUnique{}, "A", "=", 42).One(); !IsNoObjectFound(err) {
-		if err != nil && !IsNoObjectFound(err) {
-			t.Error(err)
-		}
-		t.Error("Object should have been deleted")
-	}
+	tt.ExpectErr(db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&ts), ErrNoObjectFound)
 
-	if count, err := db.Count(&testStructUnique{}); err != nil {
-		t.Error(err)
-	} else if n != count {
-		t.Errorf("Wrong number of objects in DB, expects %d != %d", n, count)
-	} else {
-		t.Logf("%d objects in DB", count)
-	}
+	count, err := db.Count(&testStructUnique{})
+	tt.CheckErr(err)
+	tt.Assert(n == count)
+	t.Logf("%d objects in DB", count)
 }
 
 func TestDeleteUniqueObject(t *testing.T) {
-	cleanup()
+	t.Parallel()
 
 	size := 1000
-	db := Open(dbpath)
-	defer controlDB(t, db)
+	db := createFreshTestDb(0, DefaultSchema)
+	tt := toast.FromT(t)
 
 	db.Create(&testStructUnique{}, DefaultSchema)
 
-	// inserting objects
+	s, err := db.Schema(&testStructUnique{})
+	tt.CheckErr(err)
+
+	// inserting unique objects
 	for i := 0; i < size; {
 		ts := testStructUnique{A: rand.Int(), B: rand.Int31(), C: fmt.Sprintf("bar-%d", rand.Int())}
-		if err := db.insertOrUpdate(&ts, false); err != nil && !IsUnique(err) {
+		if err := db.insertOrUpdate(s, &ts, false); err != nil && !IsUnique(err) {
 			t.Error(err)
 			t.FailNow()
 		} else if !IsUnique(err) {
@@ -727,7 +709,7 @@ func TestDeleteUniqueObject(t *testing.T) {
 	}
 	db.Close()
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	defer controlDB(t, db)
 
 	// we control that we have the good number of objects
@@ -753,7 +735,7 @@ func TestDeleteUniqueObject(t *testing.T) {
 	}
 	db.Close()
 
-	db = Open(dbpath)
+	db = Open(db.root)
 	defer controlDB(t, db)
 
 	// we check that all objects deleted are not in the DB anymore
@@ -795,7 +777,7 @@ func stress(t *testing.T, db *DB, jobs int) {
 			defer wg.Done()
 			var s []*testStruct
 
-			time.Sleep(time.Second * time.Duration(rand.Int()%15))
+			time.Sleep(time.Millisecond * time.Duration(rand.Int()%500))
 			t.Logf("starting job %d", n)
 			timer := time.Now()
 
@@ -805,16 +787,26 @@ func stress(t *testing.T, db *DB, jobs int) {
 				t.Logf("job %d: search time = %s", n, time.Since(timer))
 				t.Logf("job %d: modifying %d objects", n, len(s))
 				timer = time.Now()
+				k := randMod(42)
 				for _, ts := range s {
-					ts.A = 4242
-					db.InsertOrUpdate(ts)
+					//new := copyObject(ts).(*testStruct)
+					new := ts
+					new.A = 4242
+					new.M = time.Now()
+					new.Ptr = &k
+					db.InsertOrUpdate(new)
 					if rand.Int()%5 == 0 {
-						if err := db.Flush(ts); err != nil {
+						if err := db.Flush(new); err != nil {
 							t.Error(err)
 						}
 					}
 				}
-				t.Logf("job %d: modification time = %s", n, time.Since(timer))
+				delta := time.Since(timer)
+				timePerObj := time.Duration(0)
+				if len(s) > 0 {
+					timePerObj = time.Duration(float64(delta) / float64(len(s)))
+				}
+				t.Logf("job %d: #obj=%d mod_time=%s (%s per/obj)", n, len(s), delta, timePerObj)
 			}
 			t.Logf("stopping job %d", n)
 		}()
@@ -823,9 +815,13 @@ func stress(t *testing.T, db *DB, jobs int) {
 }
 
 func TestAsyncWrites(t *testing.T) {
-	size := 10000
+	t.Parallel()
+
+	tt := toast.FromT(t)
+	size := 5000
+	timeout := 500 * time.Millisecond
 	s := DefaultSchema
-	s.Asynchrone(1000, 5*time.Second)
+	s.Asynchrone(500, timeout)
 
 	db := createFreshTestDb(size, s)
 
@@ -850,14 +846,23 @@ func TestAsyncWrites(t *testing.T) {
 	stress(t, db, 10)
 	db = closeAndReOpen(db)
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
+	t.Logf("dropping db: %s", db.root)
+	tt.CheckErr(db.Drop())
+
+	// we wait two timeouts before checking
+	time.Sleep(2 * timeout)
+	tt.Assert(!isDirAndExist(db.root))
 }
 
 func TestAsyncWritesFastDelete(t *testing.T) {
+	t.Parallel()
 	// there is a bug when a file is deleted while it has not
 	// been written yet to disk. This test checks for that bug
-	size := 10
+	tt := toast.FromT(t)
+	size := 1000
 	s := DefaultSchema
-	s.Asynchrone(1000, 5*time.Second)
+	timeout := 500 * time.Millisecond
+	s.Asynchrone(100, timeout)
 
 	db := createFreshTestDb(size, s)
 
@@ -876,6 +881,10 @@ func TestAsyncWritesFastDelete(t *testing.T) {
 	stress(t, db, 10)
 	db = closeAndReOpen(db)
 	controlDBSize(t, db, &testStruct{}, size-search.Len())
+	tt.CheckErr(db.Drop())
+	// we wait two timeouts before checking
+	time.Sleep(2 * timeout)
+	tt.Assert(!isDirAndExist(db.root))
 }
 
 type invalidStruct struct {
@@ -891,30 +900,34 @@ func (s *invalidStruct) Validate() error {
 }
 
 func TestValidation(t *testing.T) {
-	db := Open(dbpath)
+	t.Parallel()
+	tt := toast.FromT(t)
+	db := createFreshTestDb(0, DefaultSchema)
 
 	db.Create(&invalidStruct{}, DefaultSchema)
 
-	assert(db.InsertOrUpdate(&invalidStruct{A: 41}) == nil, "insertion should work")
-	assert(errors.Is(db.InsertOrUpdate(&invalidStruct{A: 42}), ErrInvalidObject), "insertion should fail")
+	tt.CheckErr(db.InsertOrUpdate(&invalidStruct{A: 41}))
+	tt.ExpectErr(db.InsertOrUpdate(&invalidStruct{A: 42}), ErrInvalidObject)
 
 	structs := make([]*invalidStruct, 0)
 	for i := 0; i < 1000; i++ {
 		structs = append(structs, &invalidStruct{A: rand.Int() % 42})
 	}
 
-	assert(db.InsertOrUpdateMany(ToObjectSlice(structs)...) == nil, "insertion should work")
-	assert(db.InsertOrUpdateBulk(ToObjectChan(structs), 42) == nil, "insertion should work")
+	tt.CheckErr(db.InsertOrUpdateMany(ToObjectSlice(structs)...))
+	tt.CheckErr(db.InsertOrUpdateBulk(ToObjectChan(structs), 42))
 
 	structs = make([]*invalidStruct, 0)
 	for i := 0; i < 1000; i++ {
 		structs = append(structs, &invalidStruct{A: rand.Int() % 43})
 	}
-	assert(errors.Is(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject), "insertion should fail")
-	assert(errors.Is(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject), "insertion should fail")
+
+	tt.ExpectErr(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject)
+	tt.ExpectErr(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject)
 }
 
 func TestAssign(t *testing.T) {
+	t.Parallel()
 	count := 100
 	db := createFreshTestDb(count, DefaultSchema)
 	defer controlDB(t, db)
@@ -943,6 +956,7 @@ func TestAssign(t *testing.T) {
 func TestNestedStruct(t *testing.T) {
 	var ts *testStruct
 
+	t.Parallel()
 	count := 100
 	db := createFreshTestDb(count, DefaultSchema)
 	defer controlDB(t, db)
@@ -953,7 +967,114 @@ func TestNestedStruct(t *testing.T) {
 	t.Log(ts)
 }
 
+func TestConstraintTransform(t *testing.T) {
+	var out []*testStruct
+
+	t.Parallel()
+	count := 100
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt := toast.FromT(t)
+
+	tt.CheckErr(db.Search(&testStruct{}, "A", "<=", 42).Assign(&out))
+
+	for _, ts := range out {
+		tt.Assert(ts.Upper == strings.ToUpper(ts.Upper))
+		tt.Assert(ts.Lower == strings.ToLower(ts.Lower))
+	}
+
+	tt.CheckErr(db.Search(&testStruct{}, "Upper", "=", "upper").Assign(&out))
+	t.Log(len(out))
+	tt.Assert(len(out) == 100)
+
+	tt.CheckErr(db.Search(&testStruct{}, "Lower", "=", "LOWER").Assign(&out))
+	t.Log(len(out))
+	tt.Assert(len(out) == 100)
+}
+
+func TestRepairFull(t *testing.T) {
+	var db *DB
+
+	t.Parallel()
+	tt := toast.FromT(t)
+	count := 10000
+
+	tt.TimeIt("creating DB", func() { db = createFreshTestDb(count, DefaultSchema) })
+	defer controlDB(t, db)
+
+	tt.CheckErr(db.deleteSchema(&testStruct{}))
+	db = closeAndReOpen(db)
+	defer db.Close()
+	// we should get an error since the schema is not there anymore
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "<=", 42).Err(), os.ErrNotExist)
+
+	db.Create(&testStruct{}, DefaultSchema)
+	s, err := db.Schema(&testStruct{})
+	tt.CheckErr(err)
+
+	tt.TimeIt("controlling", func() { tt.ExpectErr(s.control(), ErrIndexCorrupted) })
+	tt.TimeIt("reindexing full DB", func() { tt.CheckErr(db.Repair(&testStruct{})) })
+	tt.TimeIt("controlling repaired", func() { tt.CheckErr(s.control()) })
+}
+
+func TestRepairPartial(t *testing.T) {
+	var db *DB
+
+	t.Parallel()
+	tt := toast.FromT(t)
+	count := 10000
+	corruptPerc := 0.1
+	del := int(float64(count) * corruptPerc)
+
+	tt.TimeIt("creating DB", func() { db = createFreshTestDb(count, DefaultSchema) })
+	odir := db.oDir(&testStruct{})
+
+	// we corrupt schema
+	s, err := db.Schema(&testStruct{})
+	tt.CheckErr(err)
+	uuids, err := uuidsFromDir(odir)
+	tt.CheckErr(err)
+
+	t.Logf("Corrupting %d entries (%.2f%%)", del, corruptPerc*100)
+	for del > 0 {
+		for uuid := range uuids {
+			if del == 0 {
+				break
+			}
+			if randMod(10) > 5 {
+				continue
+			}
+
+			if randMod(10) <= 5 {
+				s.ObjectIndex.deleteByUUID(uuid)
+			} else {
+				tt.CheckErr(os.Remove(filepath.Join(odir, s.filenameFromUUID(uuid))))
+			}
+
+			delete(uuids, uuid)
+			del--
+		}
+	}
+
+	// we create a new schema
+	tt.CheckErr(db.Create(&testStruct{}, DefaultSchema))
+
+	db = closeAndReOpen(db)
+	defer db.Close()
+
+	s, err = db.Schema(&testStruct{})
+	tt.ExpectErr(err, ErrIndexCorrupted)
+	tt.TimeIt("controlling", func() { tt.ExpectErr(s.control(), ErrIndexCorrupted) })
+	tt.TimeIt("reindexing partial DB", func() { tt.CheckErr(db.Repair(&testStruct{})) })
+	s, err = db.Schema(&testStruct{})
+	tt.CheckErr(err)
+	tt.TimeIt("controlling repaired", func() { tt.CheckErr(s.control()) })
+}
+
 func TestErrors(t *testing.T) {
+
+	t.Parallel()
 	count := 100
 	db := createFreshTestDb(count, DefaultSchema)
 	defer controlDB(t, db)
@@ -1006,7 +1127,7 @@ func TestErrors(t *testing.T) {
 	}
 
 	fake := &testStruct{}
+	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrStructureChanged)
 	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 42).AssignOne(&fake), ErrStructureChanged)
 	tt.ExpectErr(db.InsertOrUpdate(&testStruct{}), ErrStructureChanged)
-	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrStructureChanged)
 }

@@ -30,7 +30,7 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func searchFieldOrPanic(value interface{}) *IndexedField {
+func searchFieldOrPanic(value interface{}) *indexedField {
 	if sf, err := searchField(value); err != nil {
 		panic(err)
 	} else {
@@ -39,7 +39,7 @@ func searchFieldOrPanic(value interface{}) *IndexedField {
 }
 
 func randomIndex(size int) *fieldIndex {
-	i := NewFieldIndex(FieldDescriptor{}, 0, size)
+	i := newFieldIndex(FieldDescriptor{}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int(), uint64(k))
 	}
@@ -75,7 +75,7 @@ func TestFieldByName(t *testing.T) {
 
 func TestSimpleIndex(t *testing.T) {
 	size := 1000
-	i := NewFieldIndex(FieldDescriptor{}, 0, size)
+	i := newFieldIndex(FieldDescriptor{}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int()%50, uint64(k))
 	}
@@ -150,7 +150,7 @@ func TestIndexSearchGreaterOrEqual(t *testing.T) {
 			t.Error("search result must not be empty")
 		}
 		for _, k := range s {
-			if k.Less(sk) {
+			if k.less(sk) {
 				t.Errorf("%s not greater than or equal to %s", k, sk)
 			}
 		}
@@ -172,7 +172,7 @@ func TestIndexSearchGreater(t *testing.T) {
 		sk := i.Index[rand.Int()%i.Len()]
 		s := i.SearchGreater(sk)
 		for _, k := range s {
-			tt.Assert(k.Greater(sk))
+			tt.Assert(k.greater(sk))
 		}
 	}
 }
@@ -187,7 +187,7 @@ func TestIndexSearchLess(t *testing.T) {
 		sk := i.Index[rand.Int()%i.Len()]
 		s := i.SearchLess(sk)
 		for _, k := range s {
-			tt.Assert(k.Less(sk))
+			tt.Assert(k.less(sk))
 		}
 	}
 }
@@ -202,7 +202,7 @@ func TestIndexSearchLessOrEqual(t *testing.T) {
 		s := i.SearchLessOrEqual(sk)
 		tt.Assert(len(s) != 0)
 		for _, k := range s {
-			tt.Assert(!k.Greater(sk))
+			tt.Assert(!k.greater(sk))
 		}
 	}
 }
@@ -222,7 +222,7 @@ func TestIndexSearchEqual(t *testing.T) {
 		}
 
 		for _, k := range s {
-			tt.Assert(k.Equal(sk))
+			tt.Assert(k.equal(sk))
 		}
 	}
 }
@@ -241,7 +241,7 @@ func TestIndexSearchNotEqual(t *testing.T) {
 		tt.Assert(len(s) > 0)
 
 		for _, k := range s {
-			tt.Assert(!k.Equal(sk))
+			tt.Assert(!k.equal(sk))
 		}
 	}
 }
@@ -275,19 +275,19 @@ func TestIndexEvaluate(t *testing.T) {
 	for j := 0; j < size*2; j++ {
 		one := i.Index[rand.Int()%i.Len()]
 		other := i.Index[rand.Int()%i.Len()]
-		one.Evaluate("=", other)
-		one.Evaluate("!=", other)
-		one.Evaluate("<", other)
-		one.Evaluate("<=", other)
-		one.Evaluate(">=", other)
-		one.Evaluate(">", other)
+		one.evaluate("=", other)
+		one.evaluate("!=", other)
+		one.evaluate("<", other)
+		one.evaluate("<=", other)
+		one.evaluate(">=", other)
+		one.evaluate(">", other)
 		// this test should panic
-		shouldPanic(t, func() { one.Evaluate("<>", other) })
+		shouldPanic(t, func() { one.evaluate("<>", other) })
 	}
 }
 
-func newIndexedFieldOrPanic(i interface{}) *IndexedField {
-	if f, err := NewIndexedField(i, rand.Uint64()); err != nil {
+func newIndexedFieldOrPanic(i interface{}) *indexedField {
+	if f, err := newIndexedField(i, rand.Uint64()); err != nil {
 		panic(err)
 	} else {
 		return f
@@ -295,29 +295,29 @@ func newIndexedFieldOrPanic(i interface{}) *IndexedField {
 }
 
 func TestIndexEvaluateRegex(t *testing.T) {
-	var field *IndexedField
-	var rex *IndexedField
+	var field *indexedField
+	var rex *indexedField
 
 	field = newIndexedFieldOrPanic("Test")
 	rex = newIndexedFieldOrPanic("Test")
 
-	if !field.Evaluate("~=", rex) {
+	if !field.evaluate("~=", rex) {
 		t.Error("Should match")
 	}
 
-	if !field.Evaluate("~=", newIndexedFieldOrPanic("(?i:test)")) {
+	if !field.evaluate("~=", newIndexedFieldOrPanic("(?i:test)")) {
 		t.Error("Should match")
 	}
 
-	if !field.Evaluate("~=", newIndexedFieldOrPanic(".*")) {
+	if !field.evaluate("~=", newIndexedFieldOrPanic(".*")) {
 		t.Error("Should match")
 	}
 
-	if field.Evaluate("~=", newIndexedFieldOrPanic("test")) {
+	if field.evaluate("~=", newIndexedFieldOrPanic("test")) {
 		t.Error("Should not match")
 	}
 
-	if field.Evaluate("~=", newIndexedFieldOrPanic("testtest")) {
+	if field.evaluate("~=", newIndexedFieldOrPanic("testtest")) {
 		t.Error("Should not match")
 	}
 }
@@ -353,10 +353,71 @@ func TestIndexUpdate(t *testing.T) {
 
 func TestBuildFieldDescriptors(t *testing.T) {
 
-	//tt := toast.FromT(t)
+	tt := toast.FromT(t)
+	m := FieldDescriptors(&testStruct{})
 
-	t.Log(FieldDescriptors(&testStruct{}))
-	t.Log(FieldDescriptors(&nestedStruct{}))
-	t.Log(ObjectFingerprint(&testStruct{}))
+	tt.Assert(m["A"].Type == "int")
+	tt.Assert(m["B"].Type == "int")
+	tt.Assert(m["C"].Type == "string")
+	tt.Assert(m["D"].Type == "int16")
+	tt.Assert(m["E"].Type == "int32")
+	tt.Assert(m["F"].Type == "int64")
+	tt.Assert(m["G"].Type == "uint8")
+	tt.Assert(m["H"].Type == "uint16")
+	tt.Assert(m["I"].Type == "uint32")
+	tt.Assert(m["J"].Type == "uint64")
+	tt.Assert(m["K"].Type == "float64")
+	tt.Assert(m["L"].Type == "int8")
+	tt.Assert(m["M"].Type == "time.Time")
+	tt.Assert(m["N"].Type == "uint")
+	tt.Assert(m["O"].Type == "string")
+	tt.Assert(m["Upper"].Type == "string")
+	tt.Assert(m["Lower"].Type == "string")
+	tt.Assert(m["Nested.A"].Type == "int")
+	tt.Assert(m["Nested.B"].Type == "uint64")
+	tt.Assert(m["Nested.C"].Type == "float32")
+	tt.Assert(m["Nested.In.D"].Type == "float64")
+	tt.Assert(m["Nested.In.E"].Type == "int")
+	tt.Assert(m["Nested.In.F"].Type == "string")
+	tt.Assert(m["Nested.In.Anon.G"].Type == "string")
+	tt.Assert(m["Ptr"].Type == "*int")
+	t.Log(m)
+
+	// asserting indexed fields
+	indexed := map[string]bool{
+		"A":                true,
+		"B":                true,
+		"C":                true,
+		"D":                true,
+		"E":                true,
+		"F":                true,
+		"G":                true,
+		"H":                true,
+		"I":                true,
+		"J":                true,
+		"K":                true,
+		"L":                true,
+		"M":                true,
+		"Upper":            true,
+		"Nested.C":         true,
+		"Nested.In.F":      true,
+		"Nested.In.Anon.G": true,
+	}
+
+	for f := range indexed {
+		tt.Assert(m[f].Constraints.Index, "Asserting", f)
+	}
+
+	for f, fd := range m {
+		if !indexed[f] {
+			tt.Assert(!fd.Constraints.Index, "Asserting", f)
+		}
+	}
+
+	tt.Assert(m["Upper"].Constraints.Upper)
+	tt.Assert(m["Lower"].Constraints.Lower)
+
+	//t.Log(FieldDescriptors(&nestedStruct{}))
+	//t.Log(FieldDescriptors(&testStruct{}).Fingerprint())
 
 }

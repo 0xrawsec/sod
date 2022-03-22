@@ -3,14 +3,92 @@ package sod
 import (
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 var (
 	ErrInvalidObject = errors.New("object is not valid")
 )
 
-func ValidationErr(o Object, err error) error {
+func validationErr(o Object, err error) error {
 	return fmt.Errorf("%s %w: %s", stype(o), ErrInvalidObject, err)
+}
+
+func cloneValue(src interface{}, dst interface{}) {
+
+	srcVal := reflect.ValueOf(src)
+	srcType := reflect.TypeOf(src)
+
+	// must be a pointer to a structure of src type
+	dstVal := reflect.ValueOf(dst)
+	dstType := reflect.TypeOf(dst)
+
+	if !srcType.AssignableTo(dstType.Elem()) {
+		panic(fmt.Sprintf("%s is not assignable to %s", srcType, dstType.Elem()))
+	}
+
+	switch srcVal.Kind() {
+	case reflect.Ptr:
+		srcElem := srcVal.Elem()
+		dstElem := dstVal.Elem()
+
+		// if it is a nil pointer
+		if srcVal.IsZero() {
+			// we create a new zero value for the value referenced by srcVal
+			srcElem = reflect.Zero(srcVal.Type().Elem())
+		}
+
+		if dstElem.IsZero() {
+			dstElem.Set(reflect.New(srcElem.Type()))
+		}
+
+		cloneValue(srcElem.Interface(), dstElem.Interface())
+
+	case reflect.Slice:
+		dstElem := dstVal.Elem()
+		dstElem.Set(reflect.MakeSlice(srcType, srcVal.Len(), srcVal.Cap()))
+		// if a slice of pointers reflect.Copy will copy pointers as is
+		// however we want pointers to new structures
+		for i := 0; i < srcVal.Len(); i++ {
+			cloneValue(srcVal.Index(i).Interface(), dstElem.Index(i).Addr().Interface())
+		}
+
+	case reflect.Map:
+		dstElem := dstVal.Elem()
+		dstElem.Set(reflect.MakeMap(srcType))
+		iter := srcVal.MapRange()
+		for ok := iter.Next(); ok; ok = iter.Next() {
+			srcKey := iter.Key()
+			srcVal := iter.Value()
+			dstVal := reflect.New(srcVal.Type()).Elem()
+			cloneValue(srcVal.Interface(), dstVal.Addr().Interface())
+			dstElem.SetMapIndex(srcKey, dstVal)
+		}
+
+	case reflect.Struct:
+		srcType := srcVal.Type()
+		for i := 0; i < srcVal.NumField(); i++ {
+			structField := srcType.Field(i)
+			srcField := srcVal.Field(i)
+			dstField := dstVal.Elem().Field(i)
+			if structField.IsExported() {
+				cloneValue(srcField.Interface(), dstField.Addr().Interface())
+			}
+		}
+
+	default:
+		dst := dstVal.Elem()
+		if dst.IsZero() {
+			dst.Set(reflect.Zero(srcVal.Type()))
+		}
+		dstVal.Elem().Set(srcVal)
+	}
+}
+
+func CloneObject(o Object) (out Object) {
+	cloneValue(o, &out)
+	out.Initialize(o.UUID())
+	return out
 }
 
 type Object interface {
