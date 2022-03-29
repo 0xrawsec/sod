@@ -157,8 +157,8 @@ func (s *Search) AssignOne(target interface{}) (err error) {
 	}
 }
 
-// Assign returns the first result found calling Collect function
-// and assign the Object found to target. Target must be a *sod.Object
+// Assign returns results found calling Collect function
+// and assign them to target. Target must be a *[]sod.Object
 // otherwise the function panics. If no Object is found, ErrNoObjectFound
 // is returned
 func (s *Search) Assign(target interface{}) (err error) {
