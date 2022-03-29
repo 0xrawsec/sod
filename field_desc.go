@@ -1,9 +1,7 @@
 package sod
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -12,6 +10,8 @@ import (
 
 var (
 	timeType = reflect.TypeOf(time.Time{})
+
+	ErrFieldDescModif = errors.New("field descriptor changed")
 )
 
 type FieldDescriptor struct {
@@ -21,13 +21,21 @@ type FieldDescriptor struct {
 }
 
 func (d *FieldDescriptor) Transform(o interface{}) {
-
 	switch i := o.(type) {
 	case Object:
 		d.Constraints.TransformField(d.Path, i)
 	default:
 		d.Constraints.Transform(i)
 	}
+}
+
+func (d *FieldDescriptor) FieldEqual(other *FieldDescriptor) bool {
+	return d.Path == other.Path && d.Type == other.Type
+
+}
+
+func (d *FieldDescriptor) DeepEqual(other *FieldDescriptor) bool {
+	return reflect.DeepEqual(d, other)
 }
 
 func (d FieldDescriptor) String() string {
@@ -46,17 +54,45 @@ func FieldDescriptors(from Object) (desc FieldDescMap) {
 	return
 }
 
-func (m FieldDescMap) Fingerprint() (f string, err error) {
-	var b []byte
+func (m FieldDescMap) CompatibleWith(target FieldDescMap) (err error) {
 
-	h := md5.New()
-
-	if b, err = json.Marshal(m); err != nil {
-		return
+	for p, fd := range m {
+		if ofd, ok := target[p]; !ok {
+			return fmt.Errorf("target %w %s", ErrUnkownField, p)
+		} else if !fd.DeepEqual(&ofd) {
+			return fmt.Errorf("%w %s", ErrFieldDescModif, ofd)
+		}
 	}
 
-	h.Write(b)
-	f = hex.EncodeToString(h.Sum(nil))
+	for p, ofd := range target {
+		if fd, ok := m[p]; !ok {
+			return fmt.Errorf("source %w %s", ErrUnkownField, p)
+		} else if !ofd.DeepEqual(&fd) {
+			return fmt.Errorf("%w %s", ErrFieldDescModif, fd)
+		}
+	}
+
+	return
+}
+
+func (m FieldDescMap) FieldsCompatibleWith(target FieldDescMap) (err error) {
+
+	for p, fd := range m {
+		if ofd, ok := target[p]; !ok {
+			return fmt.Errorf("target %w %s", ErrUnkownField, p)
+		} else if !fd.FieldEqual(&ofd) {
+			return fmt.Errorf("%w %s", ErrFieldDescModif, ofd)
+		}
+	}
+
+	for p, ofd := range target {
+		if fd, ok := m[p]; !ok {
+			return fmt.Errorf("source %w %s", ErrUnkownField, p)
+		} else if !ofd.FieldEqual(&fd) {
+			return fmt.Errorf("%w %s", ErrFieldDescModif, fd)
+		}
+	}
+
 	return
 }
 

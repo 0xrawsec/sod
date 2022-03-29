@@ -521,9 +521,14 @@ func (db *DB) Create(o Object, s Schema) (err error) {
 
 	switch {
 	case err == nil:
+		s.initialize(db, o)
+
 		// the schema is existing and we don't need to build a new one
 		// update existing schema with changes
-		es.update(&s)
+		if err = es.update(&s); err != nil {
+			return
+		}
+
 		return db.saveSchema(o, es, true)
 
 	case errors.Is(err, fs.ErrNotExist):

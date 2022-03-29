@@ -1072,6 +1072,26 @@ func TestRepairPartial(t *testing.T) {
 	tt.TimeIt("controlling repaired", func() { tt.CheckErr(s.control()) })
 }
 
+func TestBuggySchema(t *testing.T) {
+	/* There is a bug at schema creation, when using
+	a custom schema because we compare a custom FieldDescriptors
+	with FieldDescriptors of the Object */
+	tt := toast.FromT(t)
+	count := 100
+
+	fds := FieldDescriptors(&testStruct{})
+	fds.Constraint("A", Constraints{Upper: true})
+	custom := NewCustomSchema(fds, DefaultExtension)
+
+	db := createFreshTestDb(count, custom)
+	db = closeAndReOpen(db)
+
+	tt.CheckErr(db.Create(&testStruct{}, custom))
+
+	db = closeAndReOpen(db)
+	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrFieldDescModif)
+}
+
 func TestErrors(t *testing.T) {
 
 	t.Parallel()
@@ -1127,6 +1147,7 @@ func TestErrors(t *testing.T) {
 	}
 
 	fake := &testStruct{}
+	t.Log(db.Create(&testStruct{}, DefaultSchema))
 	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrStructureChanged)
 	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 42).AssignOne(&fake), ErrStructureChanged)
 	tt.ExpectErr(db.InsertOrUpdate(&testStruct{}), ErrStructureChanged)

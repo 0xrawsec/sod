@@ -13,10 +13,11 @@ const (
 )
 
 var (
-	ErrIndexCorrupted   = errors.New("index is corrupted")
-	ErrBadSchema        = errors.New("schema must be a file")
-	ErrMissingObjIndex  = errors.New("schema is missing object index")
-	ErrStructureChanged = errors.New("object structure changed")
+	ErrIndexCorrupted    = errors.New("index is corrupted")
+	ErrBadSchema         = errors.New("schema must be a file")
+	ErrMissingObjIndex   = errors.New("schema is missing object index")
+	ErrStructureChanged  = errors.New("object structure changed")
+	ErrExtensionMismatch = errors.New("extension mismatch")
 
 	DefaultExtension   = ".json"
 	DefaultCompression = false
@@ -71,7 +72,6 @@ type Schema struct {
 	object       Object
 	transformers []FieldDescriptor
 
-	Fingerprint string       `json:"fingerprint"`
 	Fields      FieldDescMap `json:"fields"`
 	Extension   string       `json:"extension"`
 	Compress    bool         `json:"compress"`
@@ -120,15 +120,9 @@ func (s *Schema) initialize(db *DB, o Object) (err error) {
 	if s.Fields == nil {
 		s.Fields = FieldDescriptors(o)
 	}
+
 	// initializes the list of tranformers
 	s.transformers = s.Fields.Transformers()
-
-	// initialize fingerprint
-	if s.Fingerprint == "" {
-		if s.Fingerprint, err = s.Fields.Fingerprint(); err != nil {
-			return
-		}
-	}
 
 	// initializes ObjectsIndex if needed
 	if s.ObjectIndex == nil {
@@ -186,10 +180,30 @@ func (s *Schema) filename(o Object) string {
 	return s.filenameFromUUID(o.UUID())
 }
 
-func (s *Schema) update(from *Schema) {
-	s.Extension = from.Extension
+func (s *Schema) isCompatibleWith(other *Schema) (err error) {
+	// check if extension are compatible
+	if s.Extension != other.Extension {
+		return ErrExtensionMismatch
+	}
+
+	// check if FieldDescriptors are compatible
+	if err = s.Fields.CompatibleWith(other.Fields); err != nil {
+		return
+	}
+
+	return
+}
+
+func (s *Schema) update(from *Schema) (err error) {
+	// we check if both the schema are compatible
+	if err = s.isCompatibleWith(from); err != nil {
+		return
+	}
+
 	s.Cache = from.Cache
 	s.AsyncWrites = from.AsyncWrites
+
+	return
 }
 
 func (s *Schema) mustCache() bool {
@@ -204,20 +218,13 @@ func (s *Schema) asyncWritesEnabled() bool {
 }
 
 func (s *Schema) control() (err error) {
-	var new string
 	var uuids map[string]bool
 
 	dir := s.db.oDir(s.object)
 
-	// verifying fingerprint
-	// compute fingerprint for object associated to the current schema
-	// s.object is initialized in Initialize method
-	if new, err = FieldDescriptors(s.object).Fingerprint(); err != nil {
-		return
-	}
-
-	if new != s.Fingerprint {
-		return fmt.Errorf("%T %w", s.object, ErrStructureChanged)
+	// control that object structure did not change
+	if err := s.Fields.FieldsCompatibleWith(FieldDescriptors(s.object)); err != nil {
+		return fmt.Errorf("%T %w: %s", s.object, ErrStructureChanged, err)
 	}
 
 	// controlling index in memory
