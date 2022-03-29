@@ -24,3 +24,24 @@ func TestFieldDescriptors(t *testing.T) {
 	// comparing with a completely different struct
 	tt.ExpectErr(fds.CompatibleWith(FieldDescriptors(&foo{})), ErrUnkownField)
 }
+
+func TestNonExportedField(t *testing.T) {
+	type foo struct {
+		Item
+		Foo int
+		Bar string
+		foo *int
+	}
+
+	tt := toast.FromT(t)
+	fds := FieldDescriptors(&foo{})
+
+	t.Log(jsonOrPanic(fds))
+
+	_, ok := fds.GetDescriptor("Bar")
+	tt.Assert(ok)
+
+	_, ok = fds.GetDescriptor("foo")
+	tt.Assert(!ok)
+
+}

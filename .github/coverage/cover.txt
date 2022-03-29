@@ -12,7 +12,7 @@ github.com/0xrawsec/sod/field_desc.go:47:	FieldDescriptors	100.0%
 github.com/0xrawsec/sod/field_desc.go:57:	CompatibleWith		81.8%
 github.com/0xrawsec/sod/field_desc.go:78:	FieldsCompatibleWith	72.7%
 github.com/0xrawsec/sod/field_desc.go:99:	Transformers		100.0%
-github.com/0xrawsec/sod/field_desc.go:109:	GetDescriptor		0.0%
+github.com/0xrawsec/sod/field_desc.go:109:	GetDescriptor		100.0%
 github.com/0xrawsec/sod/field_desc.go:114:	Constraint		80.0%
 github.com/0xrawsec/sod/field_desc.go:123:	fdFromType		100.0%
 github.com/0xrawsec/sod/field_desc.go:147:	joinFieldPath		100.0%
@@ -28,7 +28,7 @@ github.com/0xrawsec/sod/field_index.go:145:	Has			0.0%
 github.com/0xrawsec/sod/field_index.go:149:	SearchEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:162:	SearchNotEqual		100.0%
 github.com/0xrawsec/sod/field_index.go:172:	SearchGreaterOrEqual	100.0%
-github.com/0xrawsec/sod/field_index.go:184:	SearchGreater		100.0%
+github.com/0xrawsec/sod/field_index.go:184:	SearchGreater		90.9%
 github.com/0xrawsec/sod/field_index.go:208:	SearchLess		100.0%
 github.com/0xrawsec/sod/field_index.go:218:	SearchLessOrEqual	100.0%
 github.com/0xrawsec/sod/field_index.go:235:	SearchByRegex		81.8%
@@ -194,4 +194,4 @@ github.com/0xrawsec/sod/utils.go:161:		dbgLock			0.0%
 github.com/0xrawsec/sod/utils.go:170:		fieldPath		100.0%
 github.com/0xrawsec/sod/utils.go:174:		unmarshalJsonFile	80.0%
 github.com/0xrawsec/sod/utils.go:202:		writeReader		60.0%
-total:						(statements)		88.4%
+total:						(statements)		88.5%

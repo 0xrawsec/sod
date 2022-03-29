@@ -172,6 +172,11 @@ func recFieldDescriptors(v reflect.Value, path string, fds *[]FieldDescriptor) {
 			fieldValue := v.Field(i)
 			structField := typ.Field(i)
 
+			// if field is not exported we continue
+			if !structField.IsExported() {
+				continue
+			}
+
 			switch fieldValue.Kind() {
 			case reflect.Ptr:
 				// create a new field
@@ -189,9 +194,7 @@ func recFieldDescriptors(v reflect.Value, path string, fds *[]FieldDescriptor) {
 			// process struct field
 			tag, _ := structField.Tag.Lookup("sod")
 			fdPath := structField.Name
-			if !structField.IsExported() {
-				continue
-			}
+
 			if path != "" {
 				fdPath = fmt.Sprintf("%s.%s", path, fdPath)
 			}

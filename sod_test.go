@@ -54,6 +54,14 @@ type testStructUnique struct {
 	C string `sod:"unique"`
 }
 
+func jsonOrPanic(i interface{}) string {
+	if b, err := json.MarshalIndent(i, "", "  "); err != nil {
+		panic(err)
+	} else {
+		return string(b)
+	}
+}
+
 func randMod(mod int) int {
 	return rand.Int() % mod
 }
