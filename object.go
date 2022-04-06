@@ -23,6 +23,11 @@ func cloneValue(src interface{}, dst interface{}) {
 	dstVal := reflect.ValueOf(dst)
 	dstType := reflect.TypeOf(dst)
 
+	if !srcVal.IsValid() {
+		// happens when we have an unitialized interface{} field in struct
+		return
+	}
+
 	if !srcType.AssignableTo(dstType.Elem()) {
 		panic(fmt.Sprintf("%s is not assignable to %s", srcType, dstType.Elem()))
 	}
@@ -47,6 +52,10 @@ func cloneValue(src interface{}, dst interface{}) {
 	case reflect.Slice:
 		dstElem := dstVal.Elem()
 		dstElem.Set(reflect.MakeSlice(srcType, srcVal.Len(), srcVal.Cap()))
+		// because MakeSlice does not change Kind of dstElem if interface{}
+		// we need to do that not to bug on dstElem.Index
+		dstElem = reflect.ValueOf(dstElem.Interface())
+
 		// if a slice of pointers reflect.Copy will copy pointers as is
 		// however we want pointers to new structures
 		for i := 0; i < srcVal.Len(); i++ {
@@ -56,6 +65,10 @@ func cloneValue(src interface{}, dst interface{}) {
 	case reflect.Map:
 		dstElem := dstVal.Elem()
 		dstElem.Set(reflect.MakeMap(srcType))
+		// because MakeMap does not change Kind of dstElem if interface{}
+		// we need to do that not to bug on SetMapIndex
+		dstElem = reflect.ValueOf(dstElem.Interface())
+
 		iter := srcVal.MapRange()
 		for ok := iter.Next(); ok; ok = iter.Next() {
 			srcKey := iter.Key()
