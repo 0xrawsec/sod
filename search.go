@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strings"
 )
 
@@ -143,18 +142,11 @@ func (s *Search) AssignOne(target interface{}) (err error) {
 
 	if o, err = s.one(); err != nil {
 		return err
-	} else {
-		v := reflect.ValueOf(target)
-		if v.Kind() == reflect.Ptr && !v.IsZero() {
-			v = v.Elem()
-			if _, ok := v.Interface().(Object); ok {
-				ov := reflect.ValueOf(o)
-				v.Set(ov)
-				return
-			}
-		}
-		panic("target type must be a *sod.Object")
 	}
+
+	AssignOne(o, target)
+
+	return
 }
 
 // Assign returns results found calling Collect function
@@ -169,28 +161,9 @@ func (s *Search) Assign(target interface{}) (err error) {
 
 	if objs, err = s.collect(); err != nil {
 		return err
-	} else {
-		v := reflect.ValueOf(target)
-		if v.Kind() == reflect.Ptr && !v.IsZero() {
-			v = v.Elem()
-			t := reflect.TypeOf(target)
-			if v.Kind() == reflect.Slice {
-				// making a new slice for value pointed by target
-				v.Set(reflect.MakeSlice(t.Elem(), len(objs), len(objs)))
-				for i := 0; i < len(objs); i++ {
-					ov := reflect.ValueOf(objs[i])
-					if _, ok := ov.Interface().(Object); ok {
-						v.Index(i).Set(reflect.ValueOf(objs[i]))
-						continue
-					}
-					goto freakout
-				}
-				return
-			}
-		}
-	freakout:
-		panic("target type must be *[]sod.Object")
 	}
+
+	return Assign(objs, target)
 }
 
 // Collect all the objects resulting from the search.

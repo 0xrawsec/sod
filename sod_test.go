@@ -192,23 +192,33 @@ func TestSimpleDb(t *testing.T) {
 
 func TestGetAll(t *testing.T) {
 	t.Parallel()
+
+	var tsSlice []*testStruct
+	var db *DB
+
 	tt := toast.FromT(t)
-	count := 100000
-	start := time.Now()
-	db := createFreshTestDb(count, DefaultSchema)
-	t.Logf("Time to insert: %s", time.Since(start))
+	count := 10000
+	tt.TimeIt("Inserting",
+		func() {
+			db = createFreshTestDb(count, DefaultSchema)
+		})
 
 	defer controlDB(t, db)
 
-	start = time.Now()
-	s, err := db.All(&testStruct{})
-	tt.CheckErr(err)
-	t.Logf("Time to retrieve: %s", time.Since(start))
-	tt.Assert(len(s) == count)
+	tt.TimeIt("db.All", func() {
+		s, err := db.All(&testStruct{})
+		tt.CheckErr(err)
+		tt.Assert(len(s) == count)
+	})
 
 	n, err := db.Count(&testStruct{})
 	tt.CheckErr(err)
 	tt.Assert(n == count)
+
+	tt.TimeIt("db.AssignAll", func() {
+		tt.CheckErr(db.AssignAll(&testStruct{}, &tsSlice))
+		tt.Assert(len(tsSlice) == count)
+	})
 }
 
 func corruptFile(path string) {

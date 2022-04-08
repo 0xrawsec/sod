@@ -573,11 +573,7 @@ func (db *DB) GetByUUID(in Object, uuid string) (out Object, err error) {
 	return db.getByUUID(in, uuid)
 }
 
-// All returns all Objects in the DB
-func (db *DB) All(of Object) (out []Object, err error) {
-	db.RLock()
-	defer db.RUnlock()
-
+func (db *DB) all(of Object) (out []Object, err error) {
 	var o Object
 	var it *iterator
 
@@ -595,6 +591,28 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	}
 
 	return
+}
+
+// All returns all Objects in the DB
+func (db *DB) All(of Object) (out []Object, err error) {
+	db.RLock()
+	defer db.RUnlock()
+
+	return db.all(of)
+}
+
+// All returns all Objects in the DB
+func (db *DB) AssignAll(of Object, target interface{}) (err error) {
+	db.RLock()
+	defer db.RUnlock()
+
+	var objs []Object
+
+	if objs, err = db.all(of); err != nil {
+		return
+	}
+
+	return Assign(objs, target)
 }
 
 func (db *DB) searchAll(o Object, field, operator string, value interface{}, constrain []*indexedField) *Search {
@@ -635,7 +653,7 @@ func (db *DB) searchAll(o Object, field, operator string, value interface{}, con
 		var index uint64
 
 		if index, ok = s.ObjectIndex.uuids[obj.UUID()]; !ok {
-			panic("index corrupted")
+			return &Search{db: db, err: ErrIndexCorrupted}
 		}
 
 		if value, ok = fieldByName(obj, fp); !ok {

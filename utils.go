@@ -16,6 +16,42 @@ import (
 	"github.com/google/uuid"
 )
 
+func AssignOne(o Object, target interface{}) {
+	v := reflect.ValueOf(target)
+	if v.Kind() == reflect.Ptr && !v.IsZero() {
+		v = v.Elem()
+		if _, ok := v.Interface().(Object); ok {
+			ov := reflect.ValueOf(o)
+			v.Set(ov)
+			return
+		}
+	}
+	panic("target type must be a *sod.Object")
+}
+
+func Assign(objs []Object, target interface{}) (err error) {
+	v := reflect.ValueOf(target)
+	if v.Kind() == reflect.Ptr && !v.IsZero() {
+		v = v.Elem()
+		t := reflect.TypeOf(target)
+		if v.Kind() == reflect.Slice {
+			// making a new slice for value pointed by target
+			v.Set(reflect.MakeSlice(t.Elem(), len(objs), len(objs)))
+			for i := 0; i < len(objs); i++ {
+				ov := reflect.ValueOf(objs[i])
+				if _, ok := ov.Interface().(Object); ok {
+					v.Index(i).Set(reflect.ValueOf(objs[i]))
+					continue
+				}
+				goto freakout
+			}
+			return
+		}
+	}
+freakout:
+	panic("target type must be *[]sod.Object")
+}
+
 // ToObjectSlice is a convenient function to pre-process arguments passed
 // to InsertOrUpdateMany function.
 func ToObjectSlice(slice interface{}) (objs []Object) {
