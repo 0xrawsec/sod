@@ -1112,6 +1112,31 @@ func TestBuggySchema(t *testing.T) {
 	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrFieldDescModif)
 }
 
+func TestSearchExpect(t *testing.T) {
+	t.Parallel()
+	var ts *testStruct
+	tt := toast.FromT(t)
+	db := createFreshTestDb(0, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt.CheckErr(db.InsertOrUpdate(&testStruct{A: 42}))
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 40).Expects(1).Err(), ErrUnexpectedNumberOfResults)
+
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 40).Expects(0).Err())
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 40).ExpectsZeroOrN(1).Err())
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 40).AssignUnique(&ts), ErrNoObjectFound)
+
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).ExpectsZeroOrN(1).Err())
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).AssignUnique(&ts))
+
+	// adding another object with same field
+	tt.CheckErr(db.InsertOrUpdate(&testStruct{A: 42}))
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).Expects(2).Err())
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).ExpectsZeroOrN(2).Err())
+	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 42).AssignUnique(&ts), ErrUnexpectedNumberOfResults)
+
+}
+
 func TestErrors(t *testing.T) {
 
 	t.Parallel()

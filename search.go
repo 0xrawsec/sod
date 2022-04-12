@@ -32,6 +32,23 @@ func newSearch(db *DB, o Object, f []*indexedField, err error) *Search {
 	return &Search{db: db, object: o, fields: f, limit: math.MaxUint, err: err}
 }
 
+// ExpectsZeroOrN checks that the number of results is the one expected or zero.
+// If not, next call to s.Err must return an error and any subsbequent
+// attempt to collect results must fail
+func (s *Search) ExpectsZeroOrN(n int) *Search {
+	found := len(s.fields)
+
+	if s.err != nil {
+		return s
+	}
+
+	if found != 0 && found != n {
+		s.err = fmt.Errorf("%w expected %d, found %d", ErrUnexpectedNumberOfResults, n, found)
+	}
+
+	return s
+}
+
 // Expects checks that the number of results is the one expected
 // if not, next call to s.Err must return an error and any subsbequent
 // attempt to collect results must fail
@@ -165,7 +182,7 @@ func (s *Search) One() (o Object, err error) {
 // to target. If search retuns more than one result, ErrUnexpectedNumberOfResults
 // is returned
 func (s *Search) AssignUnique(target interface{}) (err error) {
-	s.Expects(1)
+	s.ExpectsZeroOrN(1)
 	return s.AssignOne(target)
 }
 
