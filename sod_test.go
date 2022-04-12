@@ -679,7 +679,9 @@ func TestUniqueObject(t *testing.T) {
 	tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrFieldUnique)
 
 	tt.ShouldPanic(func() { db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(nil) })
-	tt.CheckErr(db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(&uninit))
+	tt.ExpectErr(db.Search(&testStructUnique{}, "A", "=", 42).Expects(2).AssignOne(&uninit), ErrUnexpectedNumberOfResults)
+	tt.CheckErr(db.Search(&testStructUnique{}, "A", "=", 42).Expects(1).AssignOne(&uninit))
+	tt.CheckErr(db.Search(&testStructUnique{}, "A", "=", 42).AssignUnique(&uninit))
 	tt.Assert(uninit.A == 42)
 
 	ts := &testStructUnique{}

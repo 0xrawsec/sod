@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrUnknownOperator = errors.New("unknown logical operator")
-	ErrNoObjectFound   = errors.New("no object found")
+	ErrUnknownOperator           = errors.New("unknown logical operator")
+	ErrNoObjectFound             = errors.New("no object found")
+	ErrUnexpectedNumberOfResults = errors.New("unexpected number of results")
 )
 
 func IsNoObjectFound(err error) bool {
@@ -31,10 +32,33 @@ func newSearch(db *DB, o Object, f []*indexedField, err error) *Search {
 	return &Search{db: db, object: o, fields: f, limit: math.MaxUint, err: err}
 }
 
+// Expects checks that the number of results is the one expected
+// if not, next call to s.Err must return an error and any subsbequent
+// attempt to collect results must fail
+func (s *Search) Expects(n int) *Search {
+	found := len(s.fields)
+
+	if s.err != nil {
+		return s
+	}
+
+	if found != n {
+		s.err = fmt.Errorf("%w expected %d, found %d", ErrUnexpectedNumberOfResults, n, found)
+	}
+
+	return s
+}
+
 // Operation performs a new Search while ANDing or ORing the results
 // operator must be in ["and", "&&", "or", "||"]
 func (s *Search) Operation(operator, field, comparator string, value interface{}) *Search {
+
 	op := strings.ToLower(operator)
+
+	if s.err != nil {
+		return s
+	}
+
 	switch op {
 	case "and", "&&":
 		return s.And(field, comparator, value)
@@ -48,17 +72,20 @@ func (s *Search) Operation(operator, field, comparator string, value interface{}
 
 // And performs a new Search while "ANDing" search results
 func (s *Search) And(field, operator string, value interface{}) *Search {
-	if s.Err() != nil {
+	if s.err != nil {
 		return s
 	}
+
 	return s.db.search(s.object, field, operator, value, s.fields)
 }
 
 // Or performs a new Search while "ORing" search results
 func (s *Search) Or(field, operator string, value interface{}) *Search {
-	if s.Err() != nil {
+
+	if s.err != nil {
 		return s
 	}
+
 	new := s.db.search(s.object, field, operator, value, nil)
 	marked := make(map[uint64]bool)
 	// we mark the fields of the new search
@@ -83,6 +110,10 @@ func (s *Search) Len() int {
 // the objects resulting from the search
 func (s *Search) Iterator() (it *iterator, err error) {
 	var sch *Schema
+
+	if s.err != nil {
+		return nil, s.err
+	}
 
 	if sch, err = s.db.schema(s.object); err != nil {
 		return
@@ -128,6 +159,14 @@ func (s *Search) One() (o Object, err error) {
 	defer s.db.RUnlock()
 
 	return s.one()
+}
+
+// AssignUnique checks there is only one result in search and assign it
+// to target. If search retuns more than one result, ErrUnexpectedNumberOfResults
+// is returned
+func (s *Search) AssignUnique(target interface{}) (err error) {
+	s.Expects(1)
+	return s.AssignOne(target)
 }
 
 // AssignOne returns the first result found calling Collect function
@@ -212,8 +251,8 @@ func (s *Search) collect() (out []Object, err error) {
 	var it *iterator
 	var o Object
 
-	if s.Err() != nil {
-		return nil, s.Err()
+	if s.err != nil {
+		return nil, s.err
 	}
 
 	if it, err = s.Iterator(); err != nil {
