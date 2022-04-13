@@ -1,6 +1,6 @@
 module github.com/0xrawsec/sod
 
-go 1.16
+go 1.18
 
 require (
 	github.com/0xrawsec/toast v1.2.3
