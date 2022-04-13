@@ -601,7 +601,7 @@ func (db *DB) All(of Object) (out []Object, err error) {
 	return db.all(of)
 }
 
-// All returns all Objects in the DB
+// AssignAll assigns all Objects in the DB to target
 func (db *DB) AssignAll(of Object, target interface{}) (err error) {
 	db.RLock()
 	defer db.RUnlock()
@@ -613,6 +613,23 @@ func (db *DB) AssignAll(of Object, target interface{}) (err error) {
 	}
 
 	return Assign(objs, target)
+}
+
+// AssignIndex assign indexed fields to target. It prevents from fetching objects from disk
+// if the only thing we actually want to query is some indexed fields. As indexes are
+// all in memory this call is fast. The function panics if target is not a slice pointer
+// or if indexed values cannot be assigned to target elements.
+func (db *DB) AssignIndex(of Object, field string, target interface{}) (err error) {
+	db.RLock()
+	defer db.RUnlock()
+
+	var s *Schema
+
+	if s, err = db.schema(of); err != nil {
+		return
+	}
+
+	return s.assignIndex(of, field, target)
 }
 
 func (db *DB) searchAll(o Object, field, operator string, value interface{}, constrain []*indexedField) *Search {

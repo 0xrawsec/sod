@@ -40,7 +40,7 @@ func Assign(objs []Object, target interface{}) (err error) {
 			for i := 0; i < len(objs); i++ {
 				ov := reflect.ValueOf(objs[i])
 				if _, ok := ov.Interface().(Object); ok {
-					v.Index(i).Set(reflect.ValueOf(objs[i]))
+					v.Index(i).Set(ov)
 					continue
 				}
 				goto freakout

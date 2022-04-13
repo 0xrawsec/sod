@@ -88,7 +88,7 @@ func genTestStructs(n int) chan Object {
 				G:     uint8(randMod(42)),
 				H:     uint16(randMod(42)),
 				I:     uint32(randMod(42)),
-				K:     float64(randMod(42)),
+				K:     float64(randMod(42)) * 42.42 * 0.42,
 				L:     int8(randMod(42)),
 				M:     time.Now(),
 				N:     uint(randMod(42)),
@@ -1134,7 +1134,40 @@ func TestSearchExpect(t *testing.T) {
 	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).Expects(2).Err())
 	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).ExpectsZeroOrN(2).Err())
 	tt.ExpectErr(db.Search(&testStruct{}, "A", "=", 42).AssignUnique(&ts), ErrUnexpectedNumberOfResults)
+}
 
+func TestAssignIndex(t *testing.T) {
+
+	t.Parallel()
+	tt := toast.FromT(t)
+	count := 100
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	var strIndex []string
+	var intIndex []int
+	var floatIndex []float32
+	var timeIndex []time.Time
+
+	// testing string index
+	tt.CheckErr(db.AssignIndex(&testStruct{}, "C", &strIndex))
+	t.Log(strIndex)
+
+	// testing int index
+	tt.CheckErr(db.AssignIndex(&testStruct{}, "A", &intIndex))
+	t.Log(intIndex)
+
+	// testing float index
+	tt.CheckErr(db.AssignIndex(&testStruct{}, "K", &floatIndex))
+	t.Log(floatIndex)
+
+	tt.CheckErr(db.AssignIndex(&testStruct{}, "M", &timeIndex))
+	t.Log(timeIndex)
+
+	// testing non-existing index
+	tt.ExpectErr(db.AssignIndex(&testStruct{}, "N", &floatIndex), ErrUnindexedField)
+
+	tt.ShouldPanic(func() { db.AssignIndex(&testStruct{}, "A", intIndex) })
 }
 
 func TestErrors(t *testing.T) {

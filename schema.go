@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 )
 
@@ -18,6 +19,7 @@ var (
 	ErrMissingObjIndex   = errors.New("schema is missing object index")
 	ErrStructureChanged  = errors.New("object structure changed")
 	ErrExtensionMismatch = errors.New("extension mismatch")
+	ErrUnindexedField    = errors.New("field is not indexed")
 
 	DefaultExtension   = ".json"
 	DefaultCompression = false
@@ -215,6 +217,54 @@ func (s *Schema) asyncWritesEnabled() bool {
 		return s.AsyncWrites.Enable
 	}
 	return false
+}
+
+func (s *Schema) assignIndex(of Object, field string, target interface{}) (err error) {
+	var fi *fieldIndex
+	var ok bool
+
+	if fi, ok = s.ObjectIndex.Fields[field]; !ok {
+		return fmt.Errorf("%s %w", field, ErrUnindexedField)
+	}
+
+	index := fi.Index
+	vTarget := reflect.ValueOf(target)
+	if vTarget.Kind() == reflect.Ptr && !vTarget.IsZero() {
+		vTarget = vTarget.Elem()
+		t := reflect.TypeOf(target)
+
+		if vTarget.Kind() != reflect.Slice {
+			goto panic
+		}
+
+		// making a new slice for value pointed by target
+		vTarget.Set(reflect.MakeSlice(t.Elem(), len(index), len(index)))
+		for i := 0; i < len(index); i++ {
+			ov := reflect.ValueOf(index[i].Value)
+			switch {
+			case ov.CanFloat():
+				vTarget.Index(i).SetFloat(ov.Float())
+				continue
+			case ov.CanInt():
+				if t.Elem().Elem().AssignableTo(timeType) {
+					// time is currently encoded as int64 from UnixNano
+					vTarget.Index(i).Set(reflect.ValueOf(time.Unix(0, ov.Int())))
+				} else {
+					vTarget.Index(i).SetInt(ov.Int())
+				}
+				continue
+			case ov.CanUint():
+				vTarget.Index(i).SetUint(ov.Uint())
+				continue
+			default:
+				vTarget.Index(i).Set(ov)
+			}
+		}
+		return
+	}
+
+panic:
+	panic("target must be a slice pointer")
 }
 
 func (s *Schema) control() (err error) {
