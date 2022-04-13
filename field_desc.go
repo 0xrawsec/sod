@@ -20,6 +20,21 @@ type FieldDescriptor struct {
 	Constraints Constraints `json:"constraints"`
 }
 
+func (d *FieldDescriptor) cast() string {
+	switch d.Type {
+	case "int", "int8", "int16", "int32", "int64", "time.Time":
+		return "int64"
+	case "uint", "uint8", "uint16", "uint32", "uint64":
+		return "uint64"
+	case "float32", "float64":
+		return "float64"
+	case "string":
+		return d.Type
+	default:
+		panic(fmt.Sprintf("unkwnown type to cast %s", d.Type))
+	}
+}
+
 func (d *FieldDescriptor) Transform(o interface{}) {
 	switch i := o.(type) {
 	case Object:

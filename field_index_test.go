@@ -39,7 +39,7 @@ func searchFieldOrPanic(value interface{}) *indexedField {
 }
 
 func randomIndex(size int) *fieldIndex {
-	i := newFieldIndex(FieldDescriptor{}, 0, size)
+	i := newFieldIndex(FieldDescriptor{Type: "uint64"}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int(), uint64(k))
 	}
@@ -75,7 +75,7 @@ func TestFieldByName(t *testing.T) {
 
 func TestSimpleIndex(t *testing.T) {
 	size := 1000
-	i := newFieldIndex(FieldDescriptor{}, 0, size)
+	i := newFieldIndex(FieldDescriptor{Type: "uint64"}, 0, size)
 	for k := 0; k < size; k++ {
 		i.Insert(rand.Int()%50, uint64(k))
 	}

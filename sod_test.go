@@ -1170,6 +1170,17 @@ func TestAssignIndex(t *testing.T) {
 	tt.ShouldPanic(func() { db.AssignIndex(&testStruct{}, "A", intIndex) })
 }
 
+func TestBugCasting(t *testing.T) {
+	// there is a bug when a value is searched before anything got inserted in the index
+	t.Parallel()
+	tt := toast.FromT(t)
+	count := 0
+	db := createFreshTestDb(count, DefaultSchema)
+	defer controlDB(t, db)
+
+	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).Err())
+}
+
 func TestErrors(t *testing.T) {
 
 	t.Parallel()

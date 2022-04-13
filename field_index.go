@@ -49,6 +49,13 @@ func (i *fieldIndex) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func emptyFieldIndex() *fieldIndex {
+	return &fieldIndex{
+		Index:     make([]*indexedField, 0),
+		objectIds: make(map[uint64]*indexedField),
+	}
+}
+
 // newFieldIndex returns an empty initialized slice. Opts takes len and cap in
 // order to initialize the underlying slice
 func newFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
@@ -63,14 +70,9 @@ func newFieldIndex(desc FieldDescriptor, opts ...int) *fieldIndex {
 		Name:        desc.Path,
 		Index:       make([]*indexedField, l, c),
 		Constraints: desc.Constraints,
+		Cast:        desc.cast(),
 		objectIds:   make(map[uint64]*indexedField),
 		nameSplit:   fieldPath(desc.Path)}
-}
-
-func (in *fieldIndex) Initialize(k *indexedField) {
-	if in.Cast == "" {
-		in.Cast = k.valueTypeString()
-	}
 }
 
 func (in *fieldIndex) InsertionIndex(k *indexedField) int {
@@ -281,7 +283,6 @@ func (in *fieldIndex) Insert(value interface{}, objid uint64) (err error) {
 		return
 	}
 
-	in.Initialize(field)
 	in.insert(field)
 
 	return
@@ -338,7 +339,7 @@ func (in *fieldIndex) Delete(objid uint64) {
 // we can build some query logic based on that function searching an
 // index from the result of another index
 func (in *fieldIndex) Constrain(fields []*indexedField) (new *fieldIndex) {
-	new = newFieldIndex(FieldDescriptor{}, 0, len(fields))
+	new = emptyFieldIndex()
 	for _, fi := range fields {
 		if field, ok := in.objectIds[fi.ObjectId]; ok {
 			new.insert(field)
