@@ -1029,9 +1029,9 @@ func TestRepairFull(t *testing.T) {
 	// we should get an error since the schema is not there anymore
 	tt.ExpectErr(db.Search(&testStruct{}, "A", "<=", 42).Err(), os.ErrNotExist)
 
-	db.Create(&testStruct{}, DefaultSchema)
+	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrIndexCorrupted)
 	s, err := db.Schema(&testStruct{})
-	tt.CheckErr(err)
+	tt.ExpectErr(err, ErrIndexCorrupted)
 
 	tt.TimeIt("controlling", func() { tt.ExpectErr(s.control(), ErrIndexCorrupted) })
 	tt.TimeIt("reindexing full DB", func() { tt.CheckErr(db.Repair(&testStruct{})) })
@@ -1179,6 +1179,34 @@ func TestBugCasting(t *testing.T) {
 	defer controlDB(t, db)
 
 	tt.CheckErr(db.Search(&testStruct{}, "A", "=", 42).Err())
+}
+
+func TestIndexCorruption(t *testing.T) {
+	/*
+		Bug that does not return ErrIndexCorrupted under some circumstances:
+			1. schema got deleted (on-disk)
+			2. sod.Create is used to create a new Schema
+		Expected: sod.Create should return ErrIndexCorrupted error
+	*/
+	var db *DB
+
+	t.Parallel()
+	tt := toast.FromT(t)
+	count := 100
+
+	tt.TimeIt("creating DB", func() { db = createFreshTestDb(count, DefaultSchema) })
+	odir := db.oDir(&testStruct{})
+	schemaPath := filepath.Join(odir, SchemaFilename)
+
+	// we close database
+	tt.CheckErr(db.Close())
+
+	// we delete schema manually
+	tt.CheckErr(os.Remove(schemaPath))
+
+	db = Open(db.root)
+
+	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrIndexCorrupted)
 }
 
 func TestErrors(t *testing.T) {

@@ -541,6 +541,10 @@ func (db *DB) Create(o Object, s Schema) (err error) {
 			return
 		}
 
+		if err = s.control(); err != nil {
+			return
+		}
+
 		db.schemas[stype(o)] = &s
 
 	default:
