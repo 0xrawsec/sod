@@ -1206,7 +1206,9 @@ func TestIndexCorruption(t *testing.T) {
 
 	db = Open(db.root)
 
-	tt.ExpectErr(db.Create(&testStruct{}, DefaultSchema), ErrIndexCorrupted)
+	err := db.Create(&testStruct{}, DefaultSchema)
+	tt.ExpectErr(err, ErrIndexCorrupted)
+	tt.Assert(IsIndexCorrupted(err))
 }
 
 func TestErrors(t *testing.T) {

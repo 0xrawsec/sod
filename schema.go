@@ -33,6 +33,10 @@ var (
 	compressedExtension = ".gz"
 )
 
+func IsIndexCorrupted(err error) bool {
+	return errors.Is(err, ErrIndexCorrupted)
+}
+
 type jsonAsync struct {
 	Enable    bool   `json:"enable"`
 	Threshold int    `json:"threshold"`
