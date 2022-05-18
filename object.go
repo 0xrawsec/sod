@@ -14,6 +14,13 @@ func validationErr(o Object, err error) error {
 	return fmt.Errorf("%s %w: %s", stype(o), ErrInvalidObject, err)
 }
 
+/*
+Recursive method to clone structures.
+The default behavior is to deep clone pointers, it means that
+pointers in src and dst are not pointing to the same data.
+There is ONE exception when unexported fields are pointers, those
+still point to the same data.
+*/
 func cloneValue(src interface{}, dst interface{}) {
 
 	srcVal := reflect.ValueOf(src)
@@ -80,11 +87,16 @@ func cloneValue(src interface{}, dst interface{}) {
 
 	case reflect.Struct:
 		srcType := srcVal.Type()
+		// we deep copy structure
+		// warning: unexported pointers are copied here
+		dstVal.Elem().Set(srcVal)
 		for i := 0; i < srcVal.NumField(); i++ {
 			structField := srcType.Field(i)
 			srcField := srcVal.Field(i)
 			dstField := dstVal.Elem().Field(i)
 			if structField.IsExported() {
+				// we set to zero exported fields in order to deep copy them
+				dstField.Set(reflect.Zero(srcField.Type()))
 				cloneValue(srcField.Interface(), dstField.Addr().Interface())
 			}
 		}

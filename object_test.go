@@ -3,6 +3,7 @@ package sod
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/0xrawsec/toast"
 )
@@ -19,6 +20,7 @@ type subStruct struct {
 
 type structPtr struct {
 	Item
+	Time       time.Time
 	Slice      []string
 	EmptySlice []int
 	Map        map[int]string
@@ -34,13 +36,19 @@ type structPtr struct {
 func TestCloneObject(t *testing.T) {
 	tt := toast.FromT(t)
 
-	ts := &testStruct{}
+	ts := &testStruct{
+		M: time.Now(),
+	}
 	ts.A = 42
 	ts.B = 43
 
 	new := CloneObject(ts).(*testStruct)
 	tt.Assert(ts.A == new.A)
 	tt.Assert(ts.B == new.B)
+	tt.Assert(ts.M.Equal(new.M))
+	new.M = time.Now()
+	tt.Assert(!ts.M.Equal(new.M))
+	tt.Assert(ts.M.Before(new.M))
 
 	// modifying one struct
 	ts.A = 41
@@ -71,6 +79,7 @@ func TestCloneObjectWithPtr(t *testing.T) {
 	(*s1).Map[0] = "foofoo"
 	tt.Assert(*s1.Ptr == 43)
 
+	t.Log(*s2.Ptr)
 	tt.Assert(*s2.Ptr == 42)
 	tt.Assert(s1.UUID() == s2.UUID())
 
