@@ -62,12 +62,12 @@ github.com/0xrawsec/sod/iterator.go:33:		len			100.0%
 github.com/0xrawsec/sod/iterator.go:37:		object			100.0%
 github.com/0xrawsec/sod/iterator.go:43:		next			100.0%
 github.com/0xrawsec/sod/object.go:13:		validationErr		100.0%
-github.com/0xrawsec/sod/object.go:24:		cloneValue		97.7%
-github.com/0xrawsec/sod/object.go:113:		CloneObject		100.0%
-github.com/0xrawsec/sod/object.go:144:		Initialize		100.0%
-github.com/0xrawsec/sod/object.go:148:		UUID			100.0%
-github.com/0xrawsec/sod/object.go:152:		Transform		0.0%
-github.com/0xrawsec/sod/object.go:154:		Validate		100.0%
+github.com/0xrawsec/sod/object.go:25:		cloneValue		97.7%
+github.com/0xrawsec/sod/object.go:114:		CloneObject		100.0%
+github.com/0xrawsec/sod/object.go:145:		Initialize		100.0%
+github.com/0xrawsec/sod/object.go:149:		UUID			100.0%
+github.com/0xrawsec/sod/object.go:153:		Transform		0.0%
+github.com/0xrawsec/sod/object.go:155:		Validate		100.0%
 github.com/0xrawsec/sod/object_index.go:18:	IsUnique		100.0%
 github.com/0xrawsec/sod/object_index.go:22:	valueFieldByName	100.0%
 github.com/0xrawsec/sod/object_index.go:47:	fieldByName		100.0%
@@ -149,7 +149,7 @@ github.com/0xrawsec/sod/sod.go:308:		writeObject		66.7%
 github.com/0xrawsec/sod/sod.go:335:		getByUUID		100.0%
 github.com/0xrawsec/sod/sod.go:341:		get			92.9%
 github.com/0xrawsec/sod/sod.go:368:		insertOrUpdate		88.2%
-github.com/0xrawsec/sod/sod.go:408:		delete			91.7%
+github.com/0xrawsec/sod/sod.go:408:		delete			100.0%
 github.com/0xrawsec/sod/sod.go:431:		search			100.0%
 github.com/0xrawsec/sod/sod.go:454:		flush			75.0%
 github.com/0xrawsec/sod/sod.go:466:		flushAll		75.0%
@@ -205,4 +205,4 @@ github.com/0xrawsec/sod/utils.go:197:		dbgLock			0.0%
 github.com/0xrawsec/sod/utils.go:206:		fieldPath		100.0%
 github.com/0xrawsec/sod/utils.go:210:		unmarshalJsonFile	80.0%
 github.com/0xrawsec/sod/utils.go:238:		writeReader		60.0%
-total:						(statements)		88.3%
+total:						(statements)		88.4%

@@ -15,7 +15,8 @@ func validationErr(o Object, err error) error {
 }
 
 /*
-Recursive method to clone structures.
+Recursive method to clone structures. The idea is to have a similar
+behaviour as if we would json back and forth a structure.
 The default behavior is to deep clone pointers, it means that
 pointers in src and dst are not pointing to the same data.
 There is ONE exception when unexported fields are pointers, those
