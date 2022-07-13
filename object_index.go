@@ -10,13 +10,14 @@ import (
 var (
 	ErrUnkownField          = errors.New("unknown object field")
 	ErrFieldNotIndexed      = errors.New("field not indexed")
-	ErrFieldUnique          = errors.New("unique constraint on field")
 	ErrUnkownSearchOperator = errors.New("unknown search operator")
 	ErrCasting              = errors.New("casting error")
+
+	ErrConstraintUnique = errors.New("uniqueness constraint")
 )
 
 func IsUnique(err error) bool {
-	return errors.Is(err, ErrFieldUnique)
+	return errors.Is(err, ErrConstraintUnique)
 }
 
 func valueFieldByName(v reflect.Value, fields []string) (out reflect.Value, ok bool) {
@@ -126,7 +127,7 @@ func (in *objIndex) satisfyAll(o Object) (err error) {
 			// check constraint on value
 			objid, exists := in.uuids[o.UUID()]
 			if err = fi.Satisfy(objid, exists, iField); err != nil {
-				return fmt.Errorf("%s does not satisfy constraint: %w", fn, err)
+				return fmt.Errorf("field %s does not satisfy %w", fn, err)
 			}
 		} else {
 			return fmt.Errorf("cannot satisfy constraint %w %s", ErrUnkownField, fn)

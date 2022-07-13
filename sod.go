@@ -325,9 +325,6 @@ func (db *DB) writeObject(o Object) (err error) {
 	if err = writeReader(path, bytes.NewBuffer(data), DefaultPermissions, s.Compress); err != nil {
 		return
 	}
-	/*if err = ioutil.WriteFile(path, data, DefaultPermissions); err != nil {
-		return
-	}*/
 
 	return
 }
@@ -365,7 +362,7 @@ func (db *DB) get(in Object) (out Object, err error) {
 	return
 }
 
-func (db *DB) insertOrUpdate(s *Schema, o Object, commit bool) (err error) {
+func (db *DB) initialize(o Object) (err error) {
 	// this is a new object, we have to handle here
 	// potential uuid duplicates (even though it is very unlikely)
 	if o.UUID() == "" {
@@ -376,6 +373,15 @@ func (db *DB) insertOrUpdate(s *Schema, o Object, commit bool) (err error) {
 				return
 			}
 		}
+	}
+	return
+}
+
+func (db *DB) insertOrUpdate(s *Schema, o Object, commit bool) (err error) {
+
+	// initialize object first
+	if err = db.initialize(o); err != nil {
+		return
 	}
 
 	if s.mustCache() {
@@ -817,28 +823,38 @@ func (db *DB) Exist(o Object) (ok bool, err error) {
 // InsertOrUpdateBulk inserts objects in bulk in the DB. A chunk size needs to be
 // provided to commit the DB at every chunk. The DB is locked at every chunk
 // processed, so changing the chunk size impact other concurrent DB operations.
-func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (err error) {
+// n returns the number of Objects successfully inserted.
+func (db *DB) InsertOrUpdateBulk(in chan Object, csize int) (n int, err error) {
 	var o Object
+	var insn int
+
 	chunk := make([]Object, 0, csize)
 	for o = range in {
 		chunk = append(chunk, o)
 		if len(chunk) == csize {
-			if err = db.InsertOrUpdateMany(chunk...); err != nil {
+			insn, err = db.InsertOrUpdateMany(chunk...)
+			n += insn
+			if err != nil {
 				return
 			}
 			chunk = make([]Object, 0, csize)
 		}
 	}
 
-	return db.InsertOrUpdateMany(chunk...)
+	// we process last chunk
+	insn, err = db.InsertOrUpdateMany(chunk...)
+	n += insn
+
+	return
 }
 
 // InsertOrUpdateMany inserts several objects into the DB and
 // commit schema after all insertions. It is faster than calling
 // InsertOrUpdate for every objects separately. All objects must
-// be of the same type. If a validation is found in one of the
-// objects none of the objects is inserted.
-func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
+// be of the same type. This method is atomic, so all objects
+// must satisfy constraints and be valid according to their Validate
+// method. If this method fails no object is inserted.
+func (db *DB) InsertOrUpdateMany(objects ...Object) (n int, err error) {
 	db.Lock()
 	defer db.Unlock()
 	var schema *Schema
@@ -852,13 +868,25 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 	}
 
 	expType := stype(objects[0])
+	// we make a temporary index to validate constraints accross
+	// objects to be inserted, because some objects we want to insert
+	// might be conflicting
+	tmpIndex := schema.makeTmpIndex()
+
 	// we validate all the objects prior to insertion
 	for _, o := range objects {
+
 		otype := stype(o)
+
+		// we have to initialize object before being able to make constraint checking
+		if err = db.initialize(o); err != nil {
+			return
+		}
 
 		// testing if all objects in parameters are of the same type
 		if otype != expType {
-			return fmt.Errorf("%w expecting %s, got %s", ErrWrongObjectType, expType, otype)
+			err = fmt.Errorf("%w expecting %s, got %s", ErrWrongObjectType, expType, otype)
+			return
 		}
 
 		// making transformations prior to validation
@@ -866,22 +894,37 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (err error) {
 		o.Transform()
 		// schema transformation superseeds Object transformation
 		schema.transform(o)
-		if err := o.Validate(); err != nil {
-			return validationErr(o, err)
+		// validate object before insertion
+		if err = o.Validate(); err != nil {
+			err = validationErr(o, err)
+			return
+		}
+
+		// check that temporary index made of objects to insert
+		// validates object's constraints
+		if err = tmpIndex.insertOrUpdate(o); err != nil {
+			err = fmt.Errorf("%w > %s", err, jsonOrPanic(o))
+			return
+		}
+
+		// check that current objects' index validate object's constraints
+		if err = schema.ObjectIndex.satisfyAll(o); err != nil {
+			err = fmt.Errorf("%w > %s", err, jsonOrPanic(o))
+			return
 		}
 	}
 
+	// inserting objects
 	for _, o := range objects {
 		if e := db.insertOrUpdate(schema, o, false); e != nil {
-			err = e
+			err = fmt.Errorf("%w > %s", e, jsonOrPanic(o))
 			break
 		}
+		n++
 	}
 
-	if len(objects) > 0 {
-		if e := db.commit(objects[0]); e != nil {
-			return e
-		}
+	if e := db.commit(objects[0]); e != nil {
+		err = e
 	}
 
 	return

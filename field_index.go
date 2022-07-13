@@ -132,11 +132,11 @@ func (in *fieldIndex) Satisfy(objid uint64, exist bool, fvalue *indexedField) (e
 		equals := in.SearchEqual(fvalue)
 
 		if len(equals) > 1 {
-			return ErrFieldUnique
+			return ErrConstraintUnique
 		} else if len(equals) == 1 {
 			// objid == 0 if object does not exists so we need to check exist flag
 			if !exist || (equals[0].ObjectId != objid) {
-				return ErrFieldUnique
+				return ErrConstraintUnique
 			}
 		}
 	}

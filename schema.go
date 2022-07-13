@@ -156,6 +156,10 @@ func (s *Schema) transform(o Object) {
 	}
 }
 
+func (s *Schema) makeTmpIndex() *objIndex {
+	return newIndex(s.Fields)
+}
+
 // index indexes an Object
 func (s *Schema) index(o Object) error {
 	return s.ObjectIndex.insertOrUpdate(o)

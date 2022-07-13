@@ -36,7 +36,7 @@ func TestNonExportedField(t *testing.T) {
 	tt := toast.FromT(t)
 	fds := FieldDescriptors(&foo{})
 
-	t.Log(jsonOrPanic(fds))
+	t.Log(pJsonOrPanic(fds))
 
 	_, ok := fds.GetDescriptor("Bar")
 	tt.Assert(ok)

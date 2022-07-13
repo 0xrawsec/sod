@@ -54,14 +54,6 @@ type testStructUnique struct {
 	C string `sod:"unique"`
 }
 
-func jsonOrPanic(i interface{}) string {
-	if b, err := json.MarshalIndent(i, "", "  "); err != nil {
-		panic(err)
-	} else {
-		return string(b)
-	}
-}
-
 func randMod(mod int) int {
 	return rand.Int() % mod
 }
@@ -113,7 +105,7 @@ func createFreshTestDb(n int, s Schema) *DB {
 	if err := db.Create(&testStruct{}, s); err != nil {
 		panic(err)
 	}
-	if err := db.InsertOrUpdateBulk(genTestStructs(n), n/5); err != nil {
+	if _, err := db.InsertOrUpdateBulk(genTestStructs(n), n/5); err != nil {
 		panic(err)
 	}
 	return db
@@ -653,9 +645,9 @@ func TestUniqueObject(t *testing.T) {
 	n := 0
 	for i := 0; i < 1000; i++ {
 		if rand.Int()%2 == 0 {
-			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrFieldUnique)
-			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{B: 43}), ErrFieldUnique)
-			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{C: "foo"}), ErrFieldUnique)
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrConstraintUnique)
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{B: 43}), ErrConstraintUnique)
+			tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{C: "foo"}), ErrConstraintUnique)
 		} else {
 			ts := testStructUnique{A: rand.Int(), B: rand.Int31()}
 			ts.C = fmt.Sprintf("bar%d%d", ts.A, ts.B)
@@ -676,7 +668,7 @@ func TestUniqueObject(t *testing.T) {
 	// reopening
 	db = Open(db.root)
 	// test inserting after re-opening
-	tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrFieldUnique)
+	tt.ExpectErr(db.InsertOrUpdate(&testStructUnique{A: 42}), ErrConstraintUnique)
 
 	tt.ShouldPanic(func() { db.Search(&testStructUnique{}, "A", "=", 42).AssignOne(nil) })
 	tt.ExpectErr(db.Search(&testStructUnique{}, "A", "=", 42).Expects(2).AssignOne(&uninit), ErrUnexpectedNumberOfResults)
@@ -934,16 +926,20 @@ func TestValidation(t *testing.T) {
 		structs = append(structs, &invalidStruct{A: rand.Int() % 42})
 	}
 
-	tt.CheckErr(db.InsertOrUpdateMany(ToObjectSlice(structs)...))
-	tt.CheckErr(db.InsertOrUpdateBulk(ToObjectChan(structs), 42))
+	_, err := db.InsertOrUpdateMany(ToObjectSlice(structs)...)
+	tt.CheckErr(err)
+	_, err = db.InsertOrUpdateBulk(ToObjectChan(structs), 42)
+	tt.CheckErr(err)
 
 	structs = make([]*invalidStruct, 0)
 	for i := 0; i < 1000; i++ {
 		structs = append(structs, &invalidStruct{A: rand.Int() % 43})
 	}
 
-	tt.ExpectErr(db.InsertOrUpdateMany(ToObjectSlice(structs)...), ErrInvalidObject)
-	tt.ExpectErr(db.InsertOrUpdateBulk(ToObjectChan(structs), 42), ErrInvalidObject)
+	_, err = db.InsertOrUpdateMany(ToObjectSlice(structs)...)
+	tt.ExpectErr(err, ErrInvalidObject)
+	_, err = db.InsertOrUpdateBulk(ToObjectChan(structs), 42)
+	tt.ExpectErr(err, ErrInvalidObject)
 }
 
 func TestAssign(t *testing.T) {
@@ -1209,6 +1205,54 @@ func TestIndexCorruption(t *testing.T) {
 	err := db.Create(&testStruct{}, DefaultSchema)
 	tt.ExpectErr(err, ErrIndexCorrupted)
 	tt.Assert(IsIndexCorrupted(err))
+}
+
+func TestBulkInsertAtomic(t *testing.T) {
+
+	t.Parallel()
+	size := 10000
+	chunkSize := 300
+	tt := toast.FromT(t)
+	db := createFreshTestDb(0, DefaultSchema)
+
+	tt.CheckErr(db.Create(&testStructUnique{}, DefaultSchema))
+	r := randMod(10000)
+	tsu := &testStructUnique{A: r, B: int32(r), C: fmt.Sprintf("%d", r)}
+	tt.CheckErr(db.InsertOrUpdate(tsu))
+
+	bulk := make([]*testStructUnique, 0)
+	marked := make(map[int]bool)
+	marked[tsu.A] = true
+	for i := 0; i < size; i++ {
+		for r = randMod(1000000); marked[r]; r = randMod(1000000) {
+		}
+		bulk = append(bulk, &testStructUnique{A: r, B: int32(r), C: fmt.Sprintf("%d", r)})
+		marked[r] = true
+	}
+	// to be sure that we have at least one duplicate
+	bulk = append(bulk, &testStructUnique{A: tsu.A})
+
+	n, err := db.Count(&testStructUnique{})
+	tt.CheckErr(err)
+	tt.Assert(n == 1)
+
+	n, err = db.InsertOrUpdateMany(ToObjectSlice(bulk)...)
+	tt.ExpectErr(err, ErrConstraintUnique)
+	tt.Assert(n == 0)
+
+	// number of items should still be the same because no insertion must have occured
+	n, err = db.Count(&testStructUnique{})
+	tt.CheckErr(err)
+	tt.Assert(n == 1, fmt.Sprintf("%d objects got inserted", n-1))
+
+	inserted, err := db.InsertOrUpdateBulk(ToObjectChan(bulk), chunkSize)
+	// we expect a constraint related error as we have one duplicate event
+	tt.ExpectErr(err, ErrConstraintUnique)
+	t.Log(err)
+
+	n, err = db.Count(&testStructUnique{})
+	tt.CheckErr(err)
+	tt.Assert(n-1 == inserted)
 }
 
 func TestErrors(t *testing.T) {

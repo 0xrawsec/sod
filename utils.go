@@ -85,6 +85,22 @@ func ToObjectChan(slice interface{}) (objs chan Object) {
 	return
 }
 
+func jsonOrPanic(i interface{}) string {
+	if b, err := json.Marshal(i); err != nil {
+		panic(err)
+	} else {
+		return string(b)
+	}
+}
+
+func pJsonOrPanic(i interface{}) string {
+	if b, err := json.MarshalIndent(i, "", "  "); err != nil {
+		panic(err)
+	} else {
+		return string(b)
+	}
+}
+
 func uuidOrPanic() string {
 	if u, err := uuid.NewRandom(); err != nil {
 		panic(err)
