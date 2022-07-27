@@ -26,7 +26,7 @@ type structPtr struct {
 	Map        map[int]string
 	EmptyMap   map[string]int
 	//PtrMap     map[string]*testStruct
-	//Sub        *subStruct
+	Sub *subStruct
 	Ptr *int
 	I1  interface{}
 	I2  interface{}
@@ -73,6 +73,12 @@ func TestCloneObjectWithPtr(t *testing.T) {
 	s2 := CloneObject(s1).(*structPtr)
 	tt.Assert(*s1.Ptr == 42)
 	tt.Assert(*s2.Ptr == 42)
+	tt.Assert(s2.I1 == nil)
+	tt.Assert(s2.I2 == nil)
+	tt.Assert(s2.I3 == nil)
+	tt.Assert(s2.Sub == nil)
+	tt.Assert(s2.EmptyMap == nil)
+	tt.Assert(s2.EmptySlice == nil)
 
 	*s1.Ptr = 43
 	(*s1).Slice[0] = "foofoo"

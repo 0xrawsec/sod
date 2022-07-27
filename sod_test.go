@@ -96,6 +96,7 @@ func genTestStructs(n int) chan Object {
 }
 
 func randDBPath() string {
+	rand.Seed(time.Now().UnixNano())
 	return fmt.Sprintf("data/database-%d", rand.Uint64())
 }
 

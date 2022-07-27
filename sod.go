@@ -894,6 +894,7 @@ func (db *DB) InsertOrUpdateMany(objects ...Object) (n int, err error) {
 		o.Transform()
 		// schema transformation superseeds Object transformation
 		schema.transform(o)
+
 		// validate object before insertion
 		if err = o.Validate(); err != nil {
 			err = validationErr(o, err)

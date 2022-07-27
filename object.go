@@ -40,16 +40,15 @@ func cloneValue(src interface{}, dst interface{}) {
 		panic(fmt.Sprintf("%s is not assignable to %s", srcType, dstType.Elem()))
 	}
 
+	// if srcVal is nil we don't need to do anything
+	if k := srcVal.Kind(); srcVal.IsZero() && (k == reflect.Ptr || k == reflect.Slice || k == reflect.Map) {
+		return
+	}
+
 	switch srcVal.Kind() {
 	case reflect.Ptr:
 		srcElem := srcVal.Elem()
 		dstElem := dstVal.Elem()
-
-		// if it is a nil pointer
-		if srcVal.IsZero() {
-			// we create a new zero value for the value referenced by srcVal
-			srcElem = reflect.Zero(srcVal.Type().Elem())
-		}
 
 		if dstElem.IsZero() {
 			dstElem.Set(reflect.New(srcElem.Type()))
